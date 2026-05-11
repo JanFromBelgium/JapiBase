@@ -1,0 +1,141 @@
+; =============================================================================
+; JAPI BASE PICO 2 - PIO CONFIGURATION (VGA 1024x768 @ 60Hz & PS/2 KEYBOARD)
+; =============================================================================
+;
+; VESA 1024x768 @ 60Hz Standard Timing (exact)
+; =============================================
+; Pixel clock:     65.000 MHz
+; System clock:   260 MHz (RP2350, stable overclock)
+; PIO clock:      260 MHz (sys_clk / 1, integer divider)
+; PIO cycles/pixel: 4  (out [2] + jmp = 4 cycles = 1/65MHz = 15.385 ns)
+;
+; WHY 4 ticks/pixel at 260 MHz instead of 3 ticks at 195 MHz (or 6 at 390):
+;   - 65 MHz × 4 = 260 MHz: integer 1:1 ratio, no fractional PIO divider
+;   - CPU gets ~5374 cycles/scanline (vs 4031 at 195) for rendering + kbd + sound
+;   - 390 MHz caused thermal instability (worked cold, failed after warmup)
+;
+; Horizontal timing (pixels / PIO cycles):
+;   Visible:      1024 px /  4096 cyc
+;   Front Porch:    24 px /    96 cyc
+;   Sync Pulse:    136 px /   544 cyc
+;   Back Porch:    160 px /   640 cyc
+;   Total:        1344 px /  5376 cyc  (20.677 us per line)
+;
+; Vertical timing (lines):
+;   Visible:       768
+;   Front Porch:     3
+;   Sync Pulse:      6
+;   Back Porch:     29
+;   Total:         806            (60.00 Hz exact)
+;
+; Sync polarity:  HSYNC negative (active LOW)
+;                 VSYNC negative (active LOW)
+;
+; Pin mapping:
+;   GP0  = VSYNC  (side-set on SM1)
+;   GP1  = HSYNC  (side-set on SM0)
+;   GP2-7 = B2 G2 R2 color (out pins on SM0)
+;   GP14 = PS/2 CLK
+;   GP15 = PS/2 DATA
+;
+; =============================================================================
+
+; --- PROGRAM 1: HSYNC & PIXEL OUTPUT (State Machine 0) ---
+;
+; Side-set pin = HSYNC (GP1)
+;   side 1 = HSYNC inactive (HIGH)  — during visible/porch/backporch
+;   side 0 = HSYNC active   (LOW)   — during sync pulse
+;
+.program vga_hsync_pixels
+.side_set 1
+
+.wrap_target
+    ; --- FRONT PORCH: 24 pixels = 96 PIO cycles ---
+    ;   mov:             1 cycle
+    ;   set [2]:         3 cycles
+    ;   loop: 23 × 4 = 92 cycles
+    ;   Total:          96 cycles ✓
+    mov pins, null      side 1      ; RGB = 000000, HSYNC HIGH
+    set x, 22           side 1 [2]
+fp_loop:
+    jmp x-- fp_loop     side 1 [3]
+
+    ; --- SYNC PULSE: 136 pixels = 544 PIO cycles ---
+    ;   set [15]:        16 cycles
+    ;   nop [15]:        16 cycles
+    ;   loop: 32 × 16 = 512 cycles
+    ;   Total:          544 cycles ✓
+    set x, 31           side 0 [15] ; HSYNC LOW (active)
+    nop                 side 0 [15]
+sync_loop:
+    nop                 side 0 [14]
+    jmp x-- sync_loop   side 0
+
+    ; --- BACK PORCH: 160 pixels = 640 PIO cycles ---
+    ;   set [14]:        15 cycles
+    ;   nop [1]:          2 cycles
+    ;   loop: 31 × 20 = 620 cycles
+    ;   irq:              1 cycle
+    ;   mov [1]:          2 cycles
+    ;   Total:          640 cycles ✓
+    set x, 30           side 1 [14] ; HSYNC HIGH (inactive)
+    nop                 side 1 [1]
+bp_loop:
+    nop                 side 1 [14]
+    jmp x-- bp_loop     side 1 [4]
+    irq 4               side 1      ; Signal SM1 (VSync) that line is done
+    mov x, y            side 1 [1]  ; Load pixel count from Y (1023)
+
+    ; --- VISIBLE PIXELS: 1024 pixels = 4096 PIO cycles ---
+    ;   loop: 1024 × 4 = 4096 cycles ✓
+pixel_loop:
+    out pins, 8         side 1 [2]  ; Output pixel color (3 cyc + jmp 1 cyc = 4/pixel)
+    jmp x-- pixel_loop  side 1
+.wrap
+    ; Line total: 96 + 544 + 640 + 4096 = 5376 cycles = 1344 pixels ✓
+
+; --- PROGRAM 2: VSYNC TIMING (State Machine 1) ---
+;
+; Side-set pin = VSYNC (GP0), optional
+;   side 1 = VSYNC inactive (HIGH)  — during visible/porch/backporch
+;   side 0 = VSYNC active   (LOW)   — during sync pulse
+;
+.program vga_vsync
+.side_set 1 opt
+
+.wrap_target
+    ; --- VISIBLE: 768 lines (Y = 767) ---
+    mov x, y            side 1      ; Load visible line count from Y
+vis_loop:
+    wait 1 irq 4        side 1
+    jmp x-- vis_loop    side 1
+
+    ; --- FRONT PORCH: 3 lines ---
+    set x, 2            side 1
+fp_v_loop:
+    wait 1 irq 4        side 1
+    jmp x-- fp_v_loop   side 1
+
+    ; --- SYNC PULSE: 6 lines ---
+    set x, 5            side 0      ; VSYNC LOW (active)
+sync_v_loop:
+    wait 1 irq 4        side 0
+    jmp x-- sync_v_loop side 0
+
+    ; --- BACK PORCH: 29 lines ---
+    set x, 28           side 1      ; VSYNC HIGH (inactive)
+bp_v_loop:
+    wait 1 irq 4        side 1
+    jmp x-- bp_v_loop   side 1
+.wrap
+
+; --- PROGRAM 3: PS/2 KEYBOARD DECODER (State Machine 2) ---
+; Unchanged from Pico 1. Samples data on falling clock edge.
+; Clock = GP14 (hardcoded), Data = GP15.
+.program ps2_keyboard
+
+.wrap_target
+    wait 1 gpio 14      ; Wait for PS/2 Clock HIGH
+    wait 0 gpio 14      ; Wait for falling edge (sampling point)
+    in pins, 1          ; Sample 1 bit from GP15 into ISR
+.wrap

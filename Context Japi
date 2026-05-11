@@ -1,0 +1,385 @@
+Japi-base: Jan's Pico Projects Base
+=====================================
+
+Japi-base is een goed gedocumenteerde computer gebaseerd op een Raspberry Pi Pico 2.
+Het doel is een volledig werkend computersysteem te bouwen dat zowel educatief als
+praktisch bruikbaar is. De naam staat voor "Jan's Pico Projects Base".
+
+
+1. Hardware platform
+--------------------
+
+Het doelplatform is de Raspberry Pi Pico 2. Alle basisvoorzieningen (VGA, keyboard,
+opslag, audio) worden afgehandeld door één core en één PIO-blok. De overige PIO's en
+de tweede core blijven beschikbaar voor gebruikersprogramma's.
+
+
+2. Basisvoorzieningen (Japi-base I/O)
+--------------------------------------
+
+2.1 VGA-uitgang
+
+  - Resolutie: 1024 x 768 @ 60Hz (exact VESA standaard)
+  - Tekstmodus: 127 tekens per regel, 64 regels per scherm
+  - Kleuren: 64 kleuren, zowel voor voorgrond als achtergrond
+  - Tekenmatrix: 8 x 12 pixels per teken (zelfde font als Pico 1)
+    (Later eventueel 10 x 15 font → 100 x 50 tekens)
+  - Uitgangspunt: er bestaat werkende VGA-code voor de originele Pico in 800 x 600.
+    Deze code moet zo getrouw mogelijk overgezet worden naar de Pico 2 in 1024 x 768.
+  - Kloksnelheid: CPU op 260 MHz, PIO-deler 1:1, 4 ticks per pixel.
+    Pixel clock: 260 / 1 / 4 = 65 MHz — precies wat 1024x768@60Hz vereist.
+  - Verschil met Pico 1: daar draaide de CPU op 240 MHz met PIO-deler /2,
+    wat 240/2/3 = 40 MHz pixel clock gaf voor 800x600.
+  - Sync-polariteit: HSYNC en VSYNC beide negatief (actief LOW), anders dan
+    800x600 waar beide positief waren.
+  - WAARSCHUWING PADDING: Bij de Pico 1 bleek 100 kolommen (800/8) niet stabiel
+    ondanks correcte berekening. Pas na terugvallen naar 99 kolommen + padding
+    bytes (1 nulbyte voor en na pixeldata) werd het beeld stabiel. Als 128
+    kolommen op de Pico 2 problemen geven, probeer 127 + padding als eerste
+    fallback.
+
+2.2 PS/2 keyboard
+
+  - PS/2 interface met een flexibele keyboard driver.
+  - Meegeleverde layouts: AZERTY_BE, AZERTY_FR, QWERTY_BE, QWERTY_UK, QWERTY_US,
+    QWERTZ_DE (elk 768 bytes, opgeslagen in LittleFS).
+  - config.sys bepaalt welk layout actief is (KEYBOARD MAPPING = AZERTY_FR).
+  - De gebruiker kan via de editor (toekomstig) een ander layout selecteren.
+  - Uitgangspunt: er bestaat werkende PS/2-code voor de originele Pico. Deze code
+    is met minimale wijzigingen overgezet naar de Pico 2.
+
+2.3 Massaopslag
+
+  - Micro SD kaart via SPI (FatFs_SPI bibliotheek, credit: carlk3).
+  - SD-kaart is optioneel bij boot — keyboard en config laden vanuit flash.
+  - ff.h wordt automatisch meegeleverd via japi_base.h (#include "ff.h").
+
+2.4 LittleFS embedded filesystem
+
+  - 360K LittleFS partitie aan het einde van de 4MB flash ("retro floppy").
+  - Bevat config.sys en 6 internationale keyboard layouts (.kbd bestanden).
+  - Eerste boot: formatteert automatisch en schrijft defaults vanuit const arrays.
+  - Volgende boots: mount alleen, laadt keyboard layout volgens config.sys.
+  - LittleFS init gebeurt VÓÓR Core 1 start (flash writes zijn onveilig
+    terwijl VGA-engine draait vanwege XIP-onderbreking).
+  - Bibliotheek: pico-lfs (Timo Kokkonen, tjko/pico-lfs op GitHub).
+
+2.5 Audio
+
+  Architectuur: alles draait op Core 1 (onderdeel van japi_base).
+
+  Hardware:
+    - PWM audio-uitgang, stereo, via ingebouwde PWM hardware.
+    - GP8 = links (PWM slice 4, kanaal A), GP9 = rechts (PWM slice 4, kanaal B).
+    - PWM wrap = 6500: bij 260 MHz CPU klok geeft dat exact 40 kHz PWM-frequentie.
+    - Resolutie: 6500 stappen per sample (~12.7 bit), ruim voldoende.
+    - Sample rate: 48.360 Hz (806 scanlines × 60 Hz).
+
+  Afspelen (DMA handler, elke scanline):
+    - Leest één stereo-sample uit een buffer (806 samples per frame).
+    - Schrijft direct naar PWM-registers (twee register-writes, geen DMA):
+        pwm_set_chan_level(4, PWM_CHAN_A, left_sample);
+        pwm_set_chan_level(4, PWM_CHAN_B, right_sample);
+
+  Berekening (VSync-periode, 38 lijnen × 4732 vrije cycles = ~180.000 cycles):
+    - Berekent alle 806 samples voor het volgende frame.
+    - Budget: ~223 cycles per sample.
+    - Ingebouwde synth-engine met 6 kanalen:
+        4 melodiekanalen: wavetable-oscillator + ADSR envelope + volume/pan
+          (~35 cycles per kanaal per sample)
+        2 ritmekanalen: noise-generator + envelope (kick, snare, hihat)
+          (~30 cycles per kanaal per sample)
+        Mixer: 6 kanalen → stereo (~15 cycles per sample)
+        Totaal: ~195 cycles per sample, past ruim in de 223 beschikbaar.
+    - Vrije tijd visible scanlines blijft gereserveerd voor toekomstige
+      grafische uitbreidingen (pixel-graphics in tekstveld).
+
+  API (aangeroepen door gebruiker op Core 0, stelt alleen parameters in):
+    - Melodiekanalen: japi_sound_wave(ch, type), japi_sound_freq(ch, hz),
+      japi_sound_volume(ch, vol), japi_sound_pan(ch, pan),
+      japi_sound_envelope(ch, a, d, s, r),
+      japi_sound_note_on(ch), japi_sound_note_off(ch).
+    - Ritmekanalen: japi_drum_hit(ch, type) — triggert een percussie-geluid
+      met voorgedefinieerde envelope.
+    - Golfvormen: sinus, blokgolf, zaagtand, driehoek (ingebouwde tabellen).
+    - De gebruiker hoeft zich niet bezig te houden met buffers of timing.
+
+  Geavanceerd gebruik (optioneel, vanuit Core 0):
+    - De gevorderde gebruiker kan de ingebouwde synth uitschakelen en zelf
+      de sample-buffer vullen met eigen synthese-code (FM, filters,
+      sample-playback van SD-kaart, etc.). Core 0 heeft 4.333.333 cycles
+      per frame beschikbaar. Core 1 speelt dan gewoon die buffer af.
+
+  Gemeten timing per scanline (oscilloscoop, GP16 als meetpin):
+    Visible lijn: handler 14.5 µs (3770 cyc), vrij 6.1 µs (1586 cyc)
+    VSync lijn:   handler  2.5 µs ( 650 cyc), vrij 18.2 µs (4732 cyc)
+  De vrije tijd tijdens visible scanlines wordt gereserveerd voor toekomstige
+  grafische uitbreidingen (pixel-graphics in tekstveld).
+
+
+2.6 Pin-toewijzing
+
+  Alle Japi-base I/O zit op de linkerkant van de Pico 2 (USB boven).
+  De rechterkant (GP16–GP28) blijft volledig vrij voor gebruikersprojecten.
+
+  Pico Pin | GPIO | Hardware               | VGA Connector
+  ---------|------|------------------------|--------------------------
+  Pin 1    | GP0  | 100 Ohm resistor       | Pin 14 (VSYNC)
+  Pin 2    | GP1  | 100 Ohm resistor       | Pin 13 (HSYNC)
+  Pin 4    | GP2  | 1k Ohm (Blue LSB)      | Pin 3  (Blue)
+  Pin 5    | GP3  | 470 Ohm (Blue MSB)     | Pin 3  (Blue)
+  Pin 6    | GP4  | 1k Ohm (Green LSB)     | Pin 2  (Green)
+  Pin 7    | GP5  | 470 Ohm (Green MSB)    | Pin 2  (Green)
+  Pin 9    | GP6  | 1k Ohm (Red LSB)       | Pin 1  (Red)
+  Pin 10   | GP7  | 470 Ohm (Red MSB)      | Pin 1  (Red)
+  Pin 11  GP8   Audio Links     ┐ Audio
+  Pin 12  GP9   Audio Rechts    ┘ (2 pinnen)
+
+  Audio PWM-filter (per kanaal, RC laagdoorlaat + DC-blokkering):
+
+    GPx ──[1k0]──┬──[10uF]──> Audio uit
+                  │
+                [3n3]
+                  │
+                 GND
+
+    - 1k0 + 3n3: RC laagdoorlaatfilter, afsnijfrequentie circa 48 kHz.
+      Audio tot 20 kHz passeert ongehinderd, PWM-harmonischen (80 kHz+)
+      worden gedempt.
+    - 10uF koppelcondensator: blokkeert DC-component, beschermt de
+      actieve speakers.
+    - Ontworpen voor aansluiting op een actieve speaker set (bv. Logitech
+      PC speakers) die een eigen versterker heeft.
+  Pin 13  GND
+  Pin 14  GP10  SD SCK (SPI1)   ┐
+  Pin 15  GP11  SD MOSI (SPI1)  │ SD kaart
+  Pin 16  GP12  SD MISO (SPI1)  │ (4 pinnen)
+  Pin 17  GP13  SD CS           ┘
+  Pin 18  GND
+  Pin 19  GP14  PS/2 CLK        ┐ PS/2
+  Pin 20  GP15  PS/2 DATA       ┘ (2 pinnen)
+
+  PS/2 pull-up weerstanden:
+
+    3.3V ──[4k7]──┬── GP14 (CLK)
+                   │
+                   └── PS/2 CLK
+
+    3.3V ──[4k7]──┬── GP15 (DATA)
+                   │
+                   └── PS/2 DATA
+
+    PS/2 CLK en DATA zijn open-collector lijnen en hebben elk een
+    4k7 pull-up weerstand naar 3.3V nodig.
+
+  Volgorde is compatibel met de bestaande Pico 1 code waar HSYNC en VSYNC
+  ook op de eerste pinnen staan.
+
+  VGA DAC weerstanden (gewogen weerstand-DAC, 3.3V GPIO, 75 ohm VGA-terminatie):
+
+    HSYNC, VSYNC:  100R serie — stroombegrenzing, 3.3V is voldoende voor
+                   VGA sync (TTL-compatibel)
+
+    Kleurbits:     MSB  470R serie — levert circa 0.43V bij 75 ohm load
+                   LSB  1k0 serie  — levert circa 0.20V bij 75 ohm load
+
+    Spanningsniveaus per kleurkanaal (berekend met 75 ohm terminatie):
+      00 = 0.00V    (uit)
+      01 = 0.20V    (alleen LSB)
+      10 = 0.43V    (alleen MSB)
+      11 = 0.63V    (beide)  — binnen VGA spec (max 0.7V)
+
+
+3. Status Pico 2 port (per 5 mei 2026)
+---------------------------------------
+
+3.1 Ontwikkelomgeving
+
+  - Pico C SDK 2.2.0 geïnstalleerd in ~/pico/pico-sdk
+  - PICO_SDK_PATH ingesteld in ~/.bashrc
+  - Toolchain: cmake 3.28.3, arm-none-eabi-gcc 13.2.1, ninja 1.11.1
+  - Editor: Geany (NIET Visual Studio Code — herhaaldelijk instabiel gebleken)
+  - Build: cd "Japi Base Pico 2/build" && ninja
+
+3.2 Bronbestanden in "Japi Base Pico 2/"
+
+  - CMakeLists.txt       — PICO_BOARD=pico2, target RP2350, pico-lfs subdirectory
+  - pico_sdk_import.cmake — gekopieerd uit SDK
+  - japi_base.pio        — PIO assembly: VESA 1024x768 exact timing + PS/2
+  - japi_base.h          — publieke API header (127x64, 64 kleuren, key codes, ff.h)
+  - japi_base.c          — VGA engine + PS/2 keyboard + DMA + LittleFS + SD
+  - japi_kbd_defaults.h  — 6 keyboard layouts als const arrays (elk 768 bytes)
+  - hw_config.c          — SD-kaart SPI configuratie (ongewijzigd van Pico 1)
+  - font_8x12.h          — 8x12 bitmap font, CP437 charset incl. box-drawing
+  - my_debug.h           — debug macros (ongewijzigd van Pico 1)
+  - FatFs_SPI/            — FatFs bibliotheek (carlk3, ongewijzigd van Pico 1)
+  - pico-lfs/             — LittleFS voor RP2040/RP2350 (Timo Kokkonen)
+  - main.c               — demo applicatie met 2 pagina's (showcase + API/keyboard test)
+
+3.3 Testresultaten
+
+  - Firmware bouwt succesvol.
+  - VGA WERKT: monitor toont 1024x768 @ 60Hz, stabiel beeld.
+  - 260 MHz met PIO divider 1:1 (4 ticks/pixel = 65 MHz pixel clock).
+  - LittleFS WERKT: eerste boot formatteert en schrijft defaults, volgende
+    boots mounten en laden keyboard layout vanuit config.sys.
+  - SD-kaart mount is optioneel (systeem boot zonder SD-kaart).
+  - Unified File I/O API: japi_fopen/fread/fwrite/fclose/exists/remove/mkdir/fsize
+    met DOS-stijl drive letters (A: = flash, C: = SD).
+  - PS/2 KEYBOARD WERKT: getest met ingebouwde keyboard test op pagina 2.
+    Default keyboard layout: AZERTY_FR.
+  - Flicker-free flash writes: VGA render-loop (vga_render_line, vga_dma_handler),
+    font_8x12 en nibble_expand staan allemaal in RAM (__not_in_flash_func / .data).
+    Flash writes via LittleFS pauzeren XIP maar raken Core 1 niet.
+  - Hardware-probleem "NO SIGNAL na reset" is opgelost (multicore_lockout
+    uitgeschakeld vóór Core 1 start).
+  - Alle basisvoorzieningen (VGA, keyboard, LittleFS, SD, File I/O) functioneel.
+
+3.4 Demo applicatie (main.c) — status 8 mei 2026
+
+  De demo applicatie heeft 2 pagina's die in een loop draaien:
+
+  Pagina 1 — Showcase:
+    - Titelbalk met systeem-info (RP2350 @ 260 MHz, Pico SDK 2.2.0)
+    - Systeem-info + restricties (rood: DMA IRQ0/IRQ1 en PIO0 gereserveerd)
+    - 64-kleuren palette (4 rijen van 16 kleuren)
+    - "Default Character Set" — alle 256 CP437 tekens
+    - "Windows and Frames" — 4 vensters in 2x2 grid
+    - "Text Colours" — fg/bg kleurcombinaties demonstratie
+    - "Runtime Font Redefinition" — grote 'A' en 'g', hex dump
+    - "Bar Chart" — verticaal staafdiagram (links)
+    - "Predefined Colours" — 9 kleuren met swatches en hex (rechts)
+    - Pixel-resolution line sweep animatie op rij 61
+
+  Pagina 2 — API Quick Reference:
+    - Titelbalk met credits (carlk3 FatFs, T. Kokkonen pico-lfs)
+    - Linker kader (open onderaan): doorlopend demo programma met commentaar
+      dat VGA output, font redefinition, custom colours, File I/O (write to SD,
+      copy to flash, exists check, read back) en keyboard input demonstreert
+    - Rechter kader (open bovenaan): vervolg code + special key constants +
+      keyboard layout configuratie als commentaarblok
+    - "Keyboard Test" kader rechtsonder: live key info (char, hex, type) +
+      typ-area met scrolling. ESC = terug naar pagina 1
+
+3.5 Flashen
+
+  Flash via BOOTSEL met:
+    cp "Japi Base Pico 2/build/japi_base.uf2" /media/jan/RP2350/
+
+
+4. Ontwikkeltools (draaien op Linux Mint PC)
+---------------------------------------------
+
+4.1 Font-editor (toekomst)
+
+  - Een tool om het 10 x 15 tekenset te ontwerpen en te bewerken.
+  - Draait op de Linux Mint ontwikkel-PC, niet op de Japi-base zelf.
+
+
+5. Software op de Japi-base
+----------------------------
+
+Alle gebruikerssoftware draait op de tweede core.
+
+5.1 Code-editor
+
+  - Look en feel gebaseerd op de klassieke QuickBASIC / Turbo Pascal editor.
+  - Keyboard-only interface (geen muis).
+  - Moet zeer efficient zijn in gebruik.
+  - Actieve syntaxcontrole met kleurcodering.
+  - Een goede editor is cruciaal om gebruikers aan te trekken.
+
+5.2 Eerste programmeertaal: MM Basic
+
+  - MM Basic (of "PicoMight Basic"?) is de eerste kandidaat om te porten.
+  - De broncode is open source beschikbaar.
+  - Verwachting: de port naar Japi-base is haalbaar zonder extreme inspanning.
+  - Doel: een krachtige taal waarmee gebruikers direct iets nuttigs kunnen doen.
+
+5.3 Tweede programmeertaal (toekomst)
+
+  - Na MM Basic willen we een tweede taal porten.
+  - Eerste voorkeur: iets in de stijl van Turbo Pascal.
+  - Alternatieven staan open: RISC-V assembler, C, Forth.
+  - Referentie: op Linux Mint gebruikt Jan bij voorkeur Lazarus met Free Pascal
+    Compiler, vanwege de zelfstandige executables zonder framework-afhankelijkheden
+    en de cross-platform ondersteuning (Linux, Windows, Mac).
+
+5.4 Toepassingen (toekomst)
+
+  - Uiteindelijk doel: nuttige toepassingen draaien op de Japi-base.
+  - Idee: muziek synthesizer.
+  - Andere suggesties zijn welkom.
+
+
+6. Documentatie
+---------------
+
+  - Het hele project moet uitstekend gedocumenteerd zijn.
+  - Er moet een handleiding komen die beschrijft:
+    - Hoe je een Japi-base opbouwt op een breadboard.
+    - Hoe je de software erop laadt.
+    - Hoe je een eigen keyboard layout toevoegt.
+  - Goede documentatie is essentieel om een gebruikersgemeenschap op te bouwen.
+
+
+7. TODO (prioriteitsvolgorde, afgesproken 8 mei 2026)
+------------------------------------------------------
+
+7.1 Font afwerken
+
+  Het huidige 8x12 font (CP437) moet gepolijst worden. Sommige glyphs
+  zijn niet optimaal. Dit lost ook deels de AZERTY layout-problemen op
+  (sommige "foute" toetsen zijn eigenlijk foute font-glyphs). Hiervoor
+  zoeken we een geschikte font-editor die op Linux Mint draait.
+
+7.2 AZERTY_FR keyboard layout nakijken
+
+  De AZERTY_FR layout werkt voor ~99% van de toetsen. Sommige afwijkingen
+  liggen aan de font-definitie, andere mogelijk aan de gegenereerde layout
+  data in japi_kbd_defaults.h. Testen met de keyboard test op pagina 2.
+
+7.3 Sound demo pagina
+
+  Aparte demo pagina (pagina 3) voor geluid, met drie secties die de
+  drie API-lagen demonstreren:
+    1. Melodie-array (sequencer): hoe je een melodie + drums invoert
+       met japi_music_play(). Simpelste niveau voor beginners.
+    2. Handmatige controle: japi_sound_freq/note_on/note_off voor
+       geluidseffecten en interactief geluid.
+    3. Raw sample buffer: hoe je zelf samples schrijft voor eigen
+       synth-code (FM, filters, sample-playback).
+  NB: De sequencer-API (laag 1) is nog niet geïmplementeerd.
+  Het API-ontwerp is in discussie (tick = zestiende noot, tempo in BPM,
+  loop optioneel, melodie + drums synchroon via globale tick-teller).
+
+7.4 Handleiding schrijven
+
+  Pas schrijven als alle features stabiel zijn. Beschrijft: hardware
+  opbouw, software laden, API gebruik, keyboard layouts, voorbeelden.
+
+
+AFGEROND
+--------
+
+  - ✅ Hardware: VGA, PS/2 keyboard en SD-kaart werken stabiel
+  - ✅ Hardware-probleem "NO SIGNAL na reset" opgelost (multicore_lockout fix)
+  - ✅ vga_driver.c/h hernoemd naar japi_base.c/h
+  - ✅ LittleFS geïntegreerd: 360K flash partitie met config.sys en 6 keyboard
+    layouts. SD-kaart niet meer nodig bij boot. (5 mei 2026)
+  - ✅ Unified File I/O API: DOS-stijl drive letters A: (flash) en C: (SD),
+    8 functies (fopen/fread/fwrite/fclose/exists/remove/mkdir/fsize) (6 mei 2026)
+  - ✅ Default keyboard layout gewijzigd naar AZERTY_FR (6 mei 2026)
+  - ✅ Demo pagina's afgewerkt: showcase + API reference met inline keyboard
+    test. Pagina 3 (aparte keyboard demo) samengevoegd in pagina 2. (8 mei 2026)
+  - ✅ Flicker-free flash writes: VGA render-loop stond al in RAM vanuit de
+    Pico 1 port. Geen aanpassingen nodig. (8 mei 2026)
+  - ✅ Credits carlk3 (FatFs) en T. Kokkonen (pico-lfs) op demo pagina 2
+  - ✅ ff.h opgenomen in japi_base.h — gebruiker hoeft slechts één header
+    te includen voor volledige functionaliteit
+  - ✅ API pagina 2 herschreven in Turbo Pascal kleurschema (5 mei 2026)
+  - ✅ Audio engine: PWM stereo op GP8/GP9 (slice 4, 40 kHz, ~12.7 bit),
+    48.360 Hz sample rate, 4 melodiekanalen (wavetable + ADSR) + 2 ritme-
+    kanalen (noise + toon), dubbelbuffer, berekening in VSync. (9 mei 2026)
+  - ✅ Audio hardware filter op breadboard: RC laagdoorlaat (1kΩ + 3.3nF)
+    + 10µF DC-blokkering per kanaal. (10 mei 2026)

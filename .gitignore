@@ -1,0 +1,6 @@
+build/
+*.uf2
+*.elf
+*.o
+*.d
+*.wav
