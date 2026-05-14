@@ -269,6 +269,18 @@ static void audio_init(void) {
 }
 
 // =========================================================================
+// BITMAP OVERLAY STATE
+// =========================================================================
+
+#define JAPI_BITMAP_MAX_RAM 131072
+
+static uint8_t *bitmap_buf = NULL;
+static int bitmap_px_x  = 0;
+static int bitmap_px_y  = 0;
+static int bitmap_px_w  = 0;
+static int bitmap_px_h  = 0;
+
+// =========================================================================
 // VGA RENDERING
 // =========================================================================
 
@@ -300,6 +312,15 @@ static void __not_in_flash_func(vga_render_line)(uint8_t *dest, int line_idx) {
     }
 
     *p32++ = 0;
+
+    if (bitmap_buf) {
+        int by = line_idx - bitmap_px_y;
+        if (by >= 0 && by < bitmap_px_h) {
+            memcpy(dest + bitmap_px_x,
+                   bitmap_buf + by * bitmap_px_w,
+                   bitmap_px_w);
+        }
+    }
 }
 
 // =========================================================================
@@ -488,6 +509,7 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
         audio_play_idx = 0;
         audio_calc_idx = 0;
     }
+
 }
 
 // =========================================================================
@@ -521,6 +543,57 @@ void vga_wait_vblank(void) {
 
 void vga_redefine_char(uint8_t code, const uint8_t bitmap[FONT_H]) {
     memcpy(font_8x12[code], bitmap, FONT_H);
+}
+
+// =========================================================================
+// BITMAP PUBLIC API
+// =========================================================================
+
+bool japi_bitmap_open(int col, int row, int w_chars, int h_chars) {
+    if (bitmap_buf) return false;
+    int pw = w_chars * FONT_W;
+    int ph = h_chars * FONT_H;
+    if (pw <= 0 || ph <= 0) return false;
+    if (col < 0 || row < 0 || col + w_chars > VGA_COLS || row + h_chars > VGA_ROWS)
+        return false;
+    if ((uint32_t)pw * ph > JAPI_BITMAP_MAX_RAM) return false;
+    uint8_t *buf = malloc(pw * ph);
+    if (!buf) return false;
+    memset(buf, VGA_BLACK, pw * ph);
+    bitmap_px_x = col * FONT_W + 4;
+    bitmap_px_y = row * FONT_H;
+    bitmap_px_w = pw;
+    bitmap_px_h = ph;
+    bitmap_buf  = buf;
+    return true;
+}
+
+void japi_bitmap_close(void) {
+    uint8_t *buf = bitmap_buf;
+    bitmap_buf = NULL;
+    free(buf);
+}
+
+void japi_bitmap_pixel(int x, int y, uint8_t colour) {
+    if (bitmap_buf && x >= 0 && x < bitmap_px_w && y >= 0 && y < bitmap_px_h)
+        bitmap_buf[y * bitmap_px_w + x] = colour;
+}
+
+void japi_bitmap_clear(uint8_t colour) {
+    if (bitmap_buf)
+        memset(bitmap_buf, colour, bitmap_px_w * bitmap_px_h);
+}
+
+uint8_t *japi_bitmap_buffer(void) {
+    return bitmap_buf;
+}
+
+int japi_bitmap_width(void) {
+    return bitmap_px_w;
+}
+
+int japi_bitmap_height(void) {
+    return bitmap_px_h;
 }
 
 // =========================================================================

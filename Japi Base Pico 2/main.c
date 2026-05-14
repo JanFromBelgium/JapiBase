@@ -74,10 +74,8 @@ static void play_tick(int ch, const uint8_t *notes, int idx, int len) {
 // COLOUR PALETTE
 // =========================================================================
 
-static void draw_palette(int start_row) {
-    int block_w = 7;
-    int start_col = (VGA_COLS - 16 * block_w) / 2;
-
+static void draw_palette(int start_row, int start_col) {
+    int block_w = 3;
     for (int group = 0; group < 4; group++) {
         int row = start_row + group * 2;
         for (int i = 0; i < 16; i++) {
@@ -132,8 +130,44 @@ static void page_showcase(void) {
     vga_print(4, 3, "Free: Core 0, PIO1 (4 SMs), DMA (polling only).", VGA_YELLOW, BG);
     vga_print(4, 52, "Do NOT change sys clock or use DMA IRQ0/IRQ1 or PIO0.", VGA_RED, BG);
 
-    // --- Colour Palette ---
-    draw_palette(6);
+    // --- Colour Palette (compact) ---
+    draw_palette(6, 1);
+
+    // --- Bitmap Graphics Demo (right of palette) ---
+    int bm_col = 52, bm_row = 6, bm_w = 73, bm_h = 8;
+    japi_bitmap_open(bm_col, bm_row, bm_w, bm_h);
+    int bpw = japi_bitmap_width(), bph = japi_bitmap_height();
+    for (int y = 0; y < bph; y++)
+        for (int x = 0; x < bpw; x++) {
+            int r = (x * 4) / bpw;
+            int g = (y * 4) / bph;
+            int b = ((x + y) * 4) / (bpw + bph);
+            japi_bitmap_pixel(x, y, (r << 4) | (g << 2) | b);
+        }
+    for (int x = 0; x < bpw; x++) {
+        japi_bitmap_pixel(x, 0, VGA_WHITE);
+        japi_bitmap_pixel(x, bph - 1, VGA_WHITE);
+    }
+    for (int y = 0; y < bph; y++) {
+        japi_bitmap_pixel(0, y, VGA_WHITE);
+        japi_bitmap_pixel(bpw - 1, y, VGA_WHITE);
+    }
+    int cx1 = bpw / 4, cy1 = bph / 3, rad1 = bph / 5;
+    int cx2 = bpw * 3 / 4, cy2 = bph * 2 / 3, rad2 = bph / 4;
+    for (int y = 0; y < bph; y++)
+        for (int x = 0; x < bpw; x++) {
+            int dx1 = x - cx1, dy1 = y - cy1;
+            if (dx1*dx1 + dy1*dy1 <= rad1*rad1)
+                japi_bitmap_pixel(x, y, VGA_RED);
+            int dx2 = x - cx2, dy2 = y - cy2;
+            if (dx2*dx2 + dy2*dy2 <= rad2*rad2)
+                japi_bitmap_pixel(x, y, VGA_CYAN);
+        }
+    for (int i = 0; i < bpw && i < bph; i++) {
+        japi_bitmap_pixel(i, i, VGA_YELLOW);
+        japi_bitmap_pixel(bpw - 1 - i, i, VGA_YELLOW);
+    }
+    vga_print(14, bm_col, "Bitmap: japi_bitmap_open/pixel/close  1 byte/pixel  64 colours", VGA_CYAN, BG);
 
     // === ROW 1: Default Character Set | Window Borders ===
 
@@ -373,7 +407,7 @@ static void page_showcase(void) {
     int t_idx = 0;
     int t_timer = 0;
 
-    // --- Block animation on row 61 ---
+    // --- Animation loop: block on row 61 + bouncing ball in bitmap ---
     {
         for (int col = 1; col < VGA_COLS - 1; col++)
             vga_set_char(61, col, CH_HZ, VGA_CYAN, BG);
@@ -385,11 +419,39 @@ static void page_showcase(void) {
         t_timer = TICK_MS;
 
         int pos = 1;
+        int ball_x = bpw / 2, ball_y = bph / 2;
+        int ball_dx = 2, ball_dy = 1;
+        int ball_r = 6;
+
         while (!japi_has_char()) {
             vga_set_char(61, pos, CH_HZ, VGA_CYAN, BG);
             pos++;
             if (pos >= VGA_COLS - 1) pos = 1;
             vga_set_char(61, pos, CH_FULL, VGA_CYAN, BG);
+
+            // Bouncing ball: erase
+            for (int dy = -ball_r; dy <= ball_r; dy++)
+                for (int dx = -ball_r; dx <= ball_r; dx++)
+                    if (dx*dx + dy*dy <= ball_r*ball_r) {
+                        int px = ball_x + dx, py = ball_y + dy;
+                        if (px >= 1 && px < bpw-1 && py >= 1 && py < bph-1) {
+                            int r = (px * 4) / bpw;
+                            int g = (py * 4) / bph;
+                            int b = ((px + py) * 4) / (bpw + bph);
+                            japi_bitmap_pixel(px, py, (r << 4) | (g << 2) | b);
+                        }
+                    }
+            ball_x += ball_dx; ball_y += ball_dy;
+            if (ball_x - ball_r <= 1 || ball_x + ball_r >= bpw - 2) ball_dx = -ball_dx;
+            if (ball_y - ball_r <= 1 || ball_y + ball_r >= bph - 2) ball_dy = -ball_dy;
+            // Bouncing ball: draw
+            for (int dy = -ball_r; dy <= ball_r; dy++)
+                for (int dx = -ball_r; dx <= ball_r; dx++)
+                    if (dx*dx + dy*dy <= ball_r*ball_r) {
+                        int px = ball_x + dx, py = ball_y + dy;
+                        if (px >= 1 && px < bpw-1 && py >= 1 && py < bph-1)
+                            japi_bitmap_pixel(px, py, VGA_WHITE);
+                    }
 
             t_timer -= 40;
             if (t_timer <= 0) {
@@ -407,6 +469,7 @@ static void page_showcase(void) {
         vga_set_char(61, pos, CH_HZ, VGA_CYAN, BG);
     }
 
+    japi_bitmap_close();
     japi_sound_off();
     japi_get_char();
 }

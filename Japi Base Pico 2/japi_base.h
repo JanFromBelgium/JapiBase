@@ -144,6 +144,17 @@ void vga_print(int row, int col, const char *str, uint8_t fg, uint8_t bg);
 void vga_wait_vblank(void);
 void vga_redefine_char(uint8_t code, const uint8_t new_bitmap[FONT_H]);
 
+// --- BITMAP GRAPHICS ---
+#define JAPI_BITMAP_MAX_RAM 131072
+
+bool     japi_bitmap_open(int col, int row, int w_chars, int h_chars);
+void     japi_bitmap_close(void);
+void     japi_bitmap_pixel(int x, int y, uint8_t colour);
+void     japi_bitmap_clear(uint8_t colour);
+uint8_t *japi_bitmap_buffer(void);
+int      japi_bitmap_width(void);
+int      japi_bitmap_height(void);
+
 // --- KEYBOARD ---
 bool japi_has_char(void);
 uint16_t japi_get_char(void);
