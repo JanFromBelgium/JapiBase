@@ -275,10 +275,13 @@ static void audio_init(void) {
 #define JAPI_BITMAP_MAX_RAM 131072
 
 static uint8_t *bitmap_buf = NULL;
-static int bitmap_px_x  = 0;
-static int bitmap_px_y  = 0;
-static int bitmap_px_w  = 0;
-static int bitmap_px_h  = 0;
+static int bitmap_px_x   = 0;   // screen pixel offset (x) of top-left
+static int bitmap_px_y   = 0;   // screen pixel offset (y) of top-left
+static int bitmap_px_w   = 0;   // width in screen pixels
+static int bitmap_px_h   = 0;   // height in screen pixels
+static int bitmap_log_w  = 0;   // logical (buffer) width in pixels
+static int bitmap_log_h  = 0;   // logical (buffer) height in pixels
+static int bitmap_scale  = 1;   // 1 or 2
 
 // =========================================================================
 // VGA RENDERING
@@ -314,11 +317,33 @@ static void __not_in_flash_func(vga_render_line)(uint8_t *dest, int line_idx) {
     *p32++ = 0;
 
     if (bitmap_buf) {
-        int by = line_idx - bitmap_px_y;
-        if (by >= 0 && by < bitmap_px_h) {
-            memcpy(dest + bitmap_px_x,
-                   bitmap_buf + by * bitmap_px_w,
-                   bitmap_px_w);
+        int sy = line_idx - bitmap_px_y;
+        if (sy >= 0 && sy < bitmap_px_h) {
+            if (bitmap_scale == 1) {
+                memcpy(dest + bitmap_px_x,
+                       bitmap_buf + sy * bitmap_log_w,
+                       bitmap_log_w);
+            } else {
+                // scale == 2: expand each logical pixel to 2x2 screen pixels.
+                // Process 4 logical pixels per iteration via one 32-bit source
+                // read and two 32-bit destination writes. For pixels p0..p3:
+                //   word0 bytes = [p0,p0,p1,p1] = p0*0x0101 | p1*0x01010000
+                //   word1 bytes = [p2,p2,p3,p3] = p2*0x0101 | p3*0x01010000
+                // bitmap_log_w (=w_chars*4) is always a multiple of 4 and both
+                // src and dst start on 4-byte boundaries.
+                const uint32_t *src32 = (const uint32_t *)(bitmap_buf + (sy >> 1) * bitmap_log_w);
+                uint32_t *dst32 = (uint32_t *)(dest + bitmap_px_x);
+                int n4 = bitmap_log_w >> 2;
+                for (int i = 0; i < n4; i++) {
+                    uint32_t v  = *src32++;
+                    uint32_t p0 = v & 0xFFu;
+                    uint32_t p1 = (v >> 8)  & 0xFFu;
+                    uint32_t p2 = (v >> 16) & 0xFFu;
+                    uint32_t p3 = v >> 24;
+                    *dst32++ = (p0 * 0x0101u) | (p1 * 0x01010000u);
+                    *dst32++ = (p2 * 0x0101u) | (p3 * 0x01010000u);
+                }
+            }
         }
     }
 }
@@ -497,9 +522,20 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
     pwm_set_chan_level(AUDIO_PWM_SLICE, PWM_CHAN_B, as->right);
     audio_play_idx++;
 
-    // Audio: calculate one sample per scanline (spread across all 806 lines)
+    // Audio: calculate one sample per scanline (spread across all 806 lines).
+    // Skip the synth entirely when every channel is idle: the calc buffer is
+    // initialised to AUDIO_CENTER (silence) and stays valid until a note starts.
     if (audio_calc_idx < AUDIO_SAMPLES) {
-        audio_buf[1 - audio_play_buf][audio_calc_idx] = synth_render_sample();
+        bool any_active = false;
+        for (int i = 0; i < JAPI_SOUND_CHANNELS; i++) {
+            if (melody_ch[i].env.phase != ENV_IDLE) { any_active = true; break; }
+        }
+        if (any_active) {
+            audio_buf[1 - audio_play_buf][audio_calc_idx] = synth_render_sample();
+        } else {
+            audio_buf[1 - audio_play_buf][audio_calc_idx].left  = AUDIO_CENTER;
+            audio_buf[1 - audio_play_buf][audio_calc_idx].right = AUDIO_CENTER;
+        }
         audio_calc_idx++;
     }
 
@@ -549,22 +585,28 @@ void vga_redefine_char(uint8_t code, const uint8_t bitmap[FONT_H]) {
 // BITMAP PUBLIC API
 // =========================================================================
 
-bool japi_bitmap_open(int col, int row, int w_chars, int h_chars) {
+bool japi_bitmap_open(int col, int row, int w_chars, int h_chars, int scale) {
     if (bitmap_buf) return false;
+    if (scale != 1 && scale != 2) return false;
     int pw = w_chars * FONT_W;
     int ph = h_chars * FONT_H;
     if (pw <= 0 || ph <= 0) return false;
     if (col < 0 || row < 0 || col + w_chars > VGA_COLS || row + h_chars > VGA_ROWS)
         return false;
-    if ((uint32_t)pw * ph > JAPI_BITMAP_MAX_RAM) return false;
-    uint8_t *buf = malloc(pw * ph);
+    int lw = pw / scale;
+    int lh = ph / scale;
+    if ((uint32_t)lw * lh > JAPI_BITMAP_MAX_RAM) return false;
+    uint8_t *buf = malloc(lw * lh);
     if (!buf) return false;
-    memset(buf, VGA_BLACK, pw * ph);
-    bitmap_px_x = col * FONT_W + 4;
-    bitmap_px_y = row * FONT_H;
-    bitmap_px_w = pw;
-    bitmap_px_h = ph;
-    bitmap_buf  = buf;
+    memset(buf, VGA_BLACK, lw * lh);
+    bitmap_px_x  = col * FONT_W + 4;
+    bitmap_px_y  = row * FONT_H;
+    bitmap_px_w  = pw;
+    bitmap_px_h  = ph;
+    bitmap_log_w = lw;
+    bitmap_log_h = lh;
+    bitmap_scale = scale;
+    bitmap_buf   = buf;
     return true;
 }
 
@@ -575,13 +617,13 @@ void japi_bitmap_close(void) {
 }
 
 void japi_bitmap_pixel(int x, int y, uint8_t colour) {
-    if (bitmap_buf && x >= 0 && x < bitmap_px_w && y >= 0 && y < bitmap_px_h)
-        bitmap_buf[y * bitmap_px_w + x] = colour;
+    if (bitmap_buf && x >= 0 && x < bitmap_log_w && y >= 0 && y < bitmap_log_h)
+        bitmap_buf[y * bitmap_log_w + x] = colour;
 }
 
 void japi_bitmap_clear(uint8_t colour) {
     if (bitmap_buf)
-        memset(bitmap_buf, colour, bitmap_px_w * bitmap_px_h);
+        memset(bitmap_buf, colour, bitmap_log_w * bitmap_log_h);
 }
 
 uint8_t *japi_bitmap_buffer(void) {
@@ -589,11 +631,11 @@ uint8_t *japi_bitmap_buffer(void) {
 }
 
 int japi_bitmap_width(void) {
-    return bitmap_px_w;
+    return bitmap_log_w;
 }
 
 int japi_bitmap_height(void) {
-    return bitmap_px_h;
+    return bitmap_log_h;
 }
 
 // =========================================================================

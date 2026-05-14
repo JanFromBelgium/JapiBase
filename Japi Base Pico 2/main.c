@@ -1,7 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "pico/stdlib.h"
 #include "japi_base.h"
+#include "starry_image.h"
 
 // =========================================================================
 // CHARACTER CODES
@@ -134,40 +137,56 @@ static void page_showcase(void) {
     draw_palette(6, 1);
 
     // --- Bitmap Graphics Demo (right of palette) ---
+    // Four audio waveforms overlaid on a black "scope" background.
     int bm_col = 52, bm_row = 6, bm_w = 73, bm_h = 8;
-    japi_bitmap_open(bm_col, bm_row, bm_w, bm_h);
+    japi_bitmap_open(bm_col, bm_row, bm_w, bm_h, 1);
     int bpw = japi_bitmap_width(), bph = japi_bitmap_height();
-    for (int y = 0; y < bph; y++)
-        for (int x = 0; x < bpw; x++) {
-            int r = (x * 4) / bpw;
-            int g = (y * 4) / bph;
-            int b = ((x + y) * 4) / (bpw + bph);
-            japi_bitmap_pixel(x, y, (r << 4) | (g << 2) | b);
+    uint8_t *bbuf = japi_bitmap_buffer();
+    memset(bbuf, VGA_BLACK, bpw * bph);
+
+    {
+        int y_mid = bph / 2;
+        int amp   = bph / 2 - 8;
+        float cycles  = 2.0f;
+        float two_pi  = 6.28318530f;
+        uint8_t wcol[4] = { VGA_YELLOW, VGA_CYAN, VGA_GREEN, VGA_MAGENTA };
+        // Faint centerline.
+        for (int x = 0; x < bpw; x++) bbuf[y_mid * bpw + x] = 0x15;
+        for (int wi = 0; wi < 4; wi++) {
+            uint8_t color = wcol[wi];
+            int prev_py = y_mid;
+            for (int x = 0; x < bpw; x++) {
+                float phase = (float)x / (float)bpw * cycles * two_pi;
+                float v = 0.0f;
+                switch (wi) {
+                    case 0: v = sinf(phase); break;
+                    case 1: v = (sinf(phase) >= 0.0f) ? 1.0f : -1.0f; break;
+                    // Saw shifted a quarter period to the left so its drop
+                    // doesn't sit at x = 0.
+                    case 2: { float p = fmodf(phase + two_pi * 0.25f, two_pi) / two_pi;
+                              v = p * 2.0f - 1.0f; break; }
+                    case 3: { float p = fmodf(phase, two_pi) / two_pi;
+                              v = (p < 0.5f) ? (p * 4.0f - 1.0f) : (3.0f - p * 4.0f);
+                              break; }
+                }
+                int py = y_mid - (int)(v * amp);
+                if (py < 0) py = 0; if (py >= bph) py = bph - 1;
+                bbuf[py * bpw + x] = color;
+                // Connect across discontinuities for square and saw waves so
+                // the vertical jump is visible. Threshold > 2 lets the saw's
+                // gentle ramp through without thickening the line.
+                int delta = py - prev_py; if (delta < 0) delta = -delta;
+                if (x > 0 && (wi == 1 || wi == 2) && delta > 2) {
+                    int lo = py < prev_py ? py : prev_py;
+                    int hi = py < prev_py ? prev_py : py;
+                    for (int yy = lo + 1; yy < hi; yy++)
+                        bbuf[yy * bpw + x] = color;
+                }
+                prev_py = py;
+            }
         }
-    for (int x = 0; x < bpw; x++) {
-        japi_bitmap_pixel(x, 0, VGA_WHITE);
-        japi_bitmap_pixel(x, bph - 1, VGA_WHITE);
     }
-    for (int y = 0; y < bph; y++) {
-        japi_bitmap_pixel(0, y, VGA_WHITE);
-        japi_bitmap_pixel(bpw - 1, y, VGA_WHITE);
-    }
-    int cx1 = bpw / 4, cy1 = bph / 3, rad1 = bph / 5;
-    int cx2 = bpw * 3 / 4, cy2 = bph * 2 / 3, rad2 = bph / 4;
-    for (int y = 0; y < bph; y++)
-        for (int x = 0; x < bpw; x++) {
-            int dx1 = x - cx1, dy1 = y - cy1;
-            if (dx1*dx1 + dy1*dy1 <= rad1*rad1)
-                japi_bitmap_pixel(x, y, VGA_RED);
-            int dx2 = x - cx2, dy2 = y - cy2;
-            if (dx2*dx2 + dy2*dy2 <= rad2*rad2)
-                japi_bitmap_pixel(x, y, VGA_CYAN);
-        }
-    for (int i = 0; i < bpw && i < bph; i++) {
-        japi_bitmap_pixel(i, i, VGA_YELLOW);
-        japi_bitmap_pixel(bpw - 1 - i, i, VGA_YELLOW);
-    }
-    vga_print(14, bm_col, "Bitmap: japi_bitmap_open/pixel/close  1 byte/pixel  64 colours", VGA_CYAN, BG);
+    vga_print(14, bm_col, "Bitmap graphics: 4 audio waveforms (sine/square/saw/triangle) overlaid", VGA_CYAN, BG);
 
     // === ROW 1: Default Character Set | Window Borders ===
 
@@ -407,7 +426,7 @@ static void page_showcase(void) {
     int t_idx = 0;
     int t_timer = 0;
 
-    // --- Animation loop: block on row 61 + bouncing ball in bitmap ---
+    // --- Animation loop: scrolling block on row 61, music ticking ---
     {
         for (int col = 1; col < VGA_COLS - 1; col++)
             vga_set_char(61, col, CH_HZ, VGA_CYAN, BG);
@@ -419,39 +438,11 @@ static void page_showcase(void) {
         t_timer = TICK_MS;
 
         int pos = 1;
-        int ball_x = bpw / 2, ball_y = bph / 2;
-        int ball_dx = 2, ball_dy = 1;
-        int ball_r = 6;
-
         while (!japi_has_char()) {
             vga_set_char(61, pos, CH_HZ, VGA_CYAN, BG);
             pos++;
             if (pos >= VGA_COLS - 1) pos = 1;
             vga_set_char(61, pos, CH_FULL, VGA_CYAN, BG);
-
-            // Bouncing ball: erase
-            for (int dy = -ball_r; dy <= ball_r; dy++)
-                for (int dx = -ball_r; dx <= ball_r; dx++)
-                    if (dx*dx + dy*dy <= ball_r*ball_r) {
-                        int px = ball_x + dx, py = ball_y + dy;
-                        if (px >= 1 && px < bpw-1 && py >= 1 && py < bph-1) {
-                            int r = (px * 4) / bpw;
-                            int g = (py * 4) / bph;
-                            int b = ((px + py) * 4) / (bpw + bph);
-                            japi_bitmap_pixel(px, py, (r << 4) | (g << 2) | b);
-                        }
-                    }
-            ball_x += ball_dx; ball_y += ball_dy;
-            if (ball_x - ball_r <= 1 || ball_x + ball_r >= bpw - 2) ball_dx = -ball_dx;
-            if (ball_y - ball_r <= 1 || ball_y + ball_r >= bph - 2) ball_dy = -ball_dy;
-            // Bouncing ball: draw
-            for (int dy = -ball_r; dy <= ball_r; dy++)
-                for (int dx = -ball_r; dx <= ball_r; dx++)
-                    if (dx*dx + dy*dy <= ball_r*ball_r) {
-                        int px = ball_x + dx, py = ball_y + dy;
-                        if (px >= 1 && px < bpw-1 && py >= 1 && py < bph-1)
-                            japi_bitmap_pixel(px, py, VGA_WHITE);
-                    }
 
             t_timer -= 40;
             if (t_timer <= 0) {
@@ -475,7 +466,154 @@ static void page_showcase(void) {
 }
 
 // =========================================================================
-// PAGE 2: API QUICK REFERENCE
+// PAGE 2: LARGE BITMAP DEMO (scale=2)
+// =========================================================================
+
+// Clear caption panel below the bitmap, aligned to the bitmap's column span
+// (cols 32..95) so the text reads as a continuation of the graphic above.
+// Rows 42 and 43 are kept blank as a visual gap between bitmap and text.
+static void clear_caption_panel(void) {
+    for (int r = 42; r <= 58; r++)
+        for (int c = 32; c <= 95; c++)
+            vga_set_char(r, c, ' ', VGA_WHITE, BG);
+}
+
+// PHASE 1: bouncing balls (simple flat-colour version, the version that
+// proved stable on this rendering budget).
+static void bitmap_phase_balls(uint8_t *buf, int W, int H, int duration_ms) {
+    // Paint gradient + white border directly into the bitmap.
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            int r = (x * 4) / W;
+            int g = (y * 4) / H;
+            int b = ((x + y) * 4) / (W + H);
+            buf[y * W + x] = (r << 4) | (g << 2) | b;
+        }
+    for (int x = 0; x < W; x++) {
+        buf[x] = VGA_WHITE; buf[(H-1)*W + x] = VGA_WHITE;
+    }
+    for (int y = 0; y < H; y++) {
+        buf[y*W] = VGA_WHITE; buf[y*W + W - 1] = VGA_WHITE;
+    }
+
+    clear_caption_panel();
+    vga_print(44, 32, "Bouncing balls",                      VGA_CYAN,   BG);
+    vga_print(46, 32, "Live animation: each frame redraws",  VGA_WHITE,  BG);
+    vga_print(47, 32, "the gradient where balls were, then", VGA_WHITE,  BG);
+    vga_print(48, 32, "fills new positions.",                VGA_WHITE,  BG);
+    vga_print(50, 32, "Filled-circle threshold:",            VGA_GREEN,  BG);
+    vga_print(51, 32, "  dx*dx + dy*dy <= r*r + r",          VGA_YELLOW, BG);
+    vga_print(52, 32, "kills 1-pixel spikes at the edges.",  VGA_WHITE,  BG);
+
+    #define NB 3
+    int bx[NB]  = {  60, 150, 200 };
+    int by[NB]  = {  60,  40, 120 };
+    int bdx[NB] = {   3,  -2,   4 };
+    int bdy[NB] = {   2,   3,  -2 };
+    int br[NB]  = {  16,  12,  14 };
+    uint8_t bc[NB] = { VGA_RED, VGA_YELLOW, VGA_CYAN };
+
+    int frames = duration_ms / 40;
+    while (frames-- > 0 && !japi_has_char()) {
+        // Erase (gradient redraw inside ball bbox).
+        for (int i = 0; i < NB; i++) {
+            int r = br[i];
+            int r2 = r*r + r;
+            for (int dy = -r; dy <= r; dy++)
+                for (int dx = -r; dx <= r; dx++)
+                    if (dx*dx + dy*dy <= r2) {
+                        int px = bx[i] + dx, py = by[i] + dy;
+                        if (px >= 1 && px < W-1 && py >= 1 && py < H-1) {
+                            int rr = (px * 4) / W;
+                            int gg = (py * 4) / H;
+                            int bb = ((px + py) * 4) / (W + H);
+                            buf[py*W + px] = (rr<<4) | (gg<<2) | bb;
+                        }
+                    }
+        }
+        // Update.
+        for (int i = 0; i < NB; i++) {
+            bx[i] += bdx[i]; by[i] += bdy[i];
+            if (bx[i] - br[i] <= 1 || bx[i] + br[i] >= W - 2) bdx[i] = -bdx[i];
+            if (by[i] - br[i] <= 1 || by[i] + br[i] >= H - 2) bdy[i] = -bdy[i];
+        }
+        // Draw.
+        for (int i = 0; i < NB; i++) {
+            int r = br[i];
+            int r2 = r*r + r;
+            for (int dy = -r; dy <= r; dy++)
+                for (int dx = -r; dx <= r; dx++)
+                    if (dx*dx + dy*dy <= r2) {
+                        int px = bx[i] + dx, py = by[i] + dy;
+                        if (px >= 1 && px < W-1 && py >= 1 && py < H-1)
+                            buf[py*W + px] = bc[i];
+                    }
+        }
+        sleep_ms(40);
+    }
+    #undef NB
+}
+
+// PHASE 2: Van Gogh "The Starry Night" (1889, public domain).
+// 256x192 Floyd-Steinberg dither into the 64-colour palette, embedded as a
+// C array in starry_image.h. Single memcpy at entry -> zero CPU per frame.
+static void bitmap_phase_photo(uint8_t *buf, int W, int H, int duration_ms) {
+    (void)W; (void)H;
+    memcpy(buf, starry_image, sizeof(starry_image));
+
+    clear_caption_panel();
+    vga_print(44, 32, "The Starry Night",                      VGA_CYAN,   BG);
+    vga_print(45, 32, "Vincent van Gogh, 1889",                VGA_YELLOW, BG);
+    vga_print(47, 32, "256x192 in 64 colours,",                VGA_WHITE,  BG);
+    vga_print(48, 32, "Floyd-Steinberg dithered.",             VGA_WHITE,  BG);
+    vga_print(50, 32, "49 KB constant C array, one memcpy",    VGA_GREEN,  BG);
+    vga_print(51, 32, "on entry, zero CPU per frame.",         VGA_GREEN,  BG);
+    vga_print(53, 32, "Source: Wikimedia Commons,",            VGA_WHITE,  BG);
+    vga_print(54, 32, "Google Art Project (public domain).",   VGA_WHITE,  BG);
+
+    int slept = 0;
+    while (slept < duration_ms && !japi_has_char()) {
+        sleep_ms(50);
+        slept += 50;
+    }
+}
+
+static void page_bitmap(void) {
+    vga_clear(VGA_WHITE, BG);
+
+    for (int c = 0; c < VGA_COLS; c++) vga_set_char(0, c, ' ', VGA_BLACK, VGA_CYAN);
+    vga_print(0, 3,  "JAPI BASE  -  Bitmap Graphics (scale=2)",     VGA_BLACK, VGA_CYAN);
+    vga_print(0, 70, "256 x 192 logical pixels  |  64 colours",     VGA_BLACK, VGA_CYAN);
+
+    vga_print(2, 3, "japi_bitmap_open(32, 10, 64, 32, 2);", VGA_YELLOW, BG);
+    vga_print(3, 3, "Each logical pixel renders as 2 x 2 screen pixels.", VGA_YELLOW, BG);
+    vga_print(4, 3, "Buffer: 256 x 192 = 49,152 bytes.",  VGA_YELLOW, BG);
+
+    if (!japi_bitmap_open(32, 10, 64, 32, 2)) {
+        vga_print(30, 30, "Bitmap allocation failed!", VGA_RED, BG);
+        wait_key();
+        return;
+    }
+
+    int W = japi_bitmap_width();
+    int H = japi_bitmap_height();
+    uint8_t *buf = japi_bitmap_buffer();
+
+    vga_print(59, 3, "Cycles between 2 demos every 5 seconds.  Press any key to continue...",
+              VGA_CYAN, BG);
+
+    while (!japi_has_char()) {
+        bitmap_phase_balls(buf, W, H, 5000);
+        if (japi_has_char()) break;
+        bitmap_phase_photo(buf, W, H, 5000);
+    }
+
+    japi_bitmap_close();
+    japi_get_char();
+}
+
+// =========================================================================
+// PAGE 3: API QUICK REFERENCE
 // =========================================================================
 
 static void page_api(void) {
@@ -712,6 +850,7 @@ int main() {
 
     while (true) {
         page_showcase();
+        page_bitmap();
         page_api();
     }
 }

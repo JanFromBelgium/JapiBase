@@ -145,9 +145,12 @@ void vga_wait_vblank(void);
 void vga_redefine_char(uint8_t code, const uint8_t new_bitmap[FONT_H]);
 
 // --- BITMAP GRAPHICS ---
+// scale = 1: 1 logical pixel = 1 screen pixel
+// scale = 2: 1 logical pixel = 2x2 screen pixels (quarters the buffer size)
+// Buffer is (w_chars*8/scale) x (h_chars*12/scale) bytes, must be <= JAPI_BITMAP_MAX_RAM
 #define JAPI_BITMAP_MAX_RAM 131072
 
-bool     japi_bitmap_open(int col, int row, int w_chars, int h_chars);
+bool     japi_bitmap_open(int col, int row, int w_chars, int h_chars, int scale);
 void     japi_bitmap_close(void);
 void     japi_bitmap_pixel(int x, int y, uint8_t colour);
 void     japi_bitmap_clear(uint8_t colour);
