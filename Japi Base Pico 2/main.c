@@ -285,7 +285,8 @@ static void page_showcase(void) {
 
     // --- Footer ---
     for (int c = 0; c < VGA_COLS; c++) vga_set_char(63, c, ' ', VGA_BLACK, VGA_WHITE);
-    vga_print(63, 2, "Press any key for API quick reference...", VGA_BLACK, VGA_WHITE);
+    vga_print(63, 2, "Playing: Korobeiniki (Tetris) \xF0 4-channel stereo sound", VGA_BLACK, VGA_WHITE);
+    vga_print(63, 72, "Press any key for API quick reference...", VGA_BLACK, VGA_WHITE);
 
     // --- Sound demo: Korobeiniki (Tetris) — 4-channel ---
     japi_sound_wave(0, JAPI_WAVE_SINE);
