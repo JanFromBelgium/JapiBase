@@ -34,6 +34,11 @@ code, honest documentation, and no hidden defects.
 
 ## Demo application
 
+**Just want to try it?** Grab the prebuilt `japi_base.uf2` from the
+[**Releases**](https://github.com/JanFromBelgium/japi-base/releases) page, hold
+**BOOTSEL** while plugging in your Pico 2, and copy the file onto the
+`RP2350` drive that appears. (Or build it yourself — see *Building* below.)
+
 The bundled firmware (`Japi Base Pico 2/main.c`) cycles through, advancing on
 any key:
 
