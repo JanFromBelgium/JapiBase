@@ -51,12 +51,30 @@ any key:
    64-colour palette (public domain, Google Art Project).
 4. **API quick reference** — live keyboard test and code examples.
 
+Running on a real VGA monitor:
+
+![Showcase page](images/demo-showcase.jpg)
+*Showcase: palette, character set, waveform bitmap and 4-channel music.*
+
+![Bouncing balls](images/demo-balls.jpg)
+*Bouncing balls — flicker-free on a solid felt background.*
+
+![The Starry Night](images/demo-starry-night.jpg)
+*The Starry Night, Floyd–Steinberg dithered into the 64-colour palette.*
+
+![API quick reference](images/demo-api-reference.jpg)
+*API quick reference with a live keyboard test.*
+
 ## Hardware
 
 All Japi Base I/O sits on the **left** side of the Pico 2 (USB at top); the
 right side (GP16–GP28) stays completely free for your projects. Build it on a
 breadboard, flash `japi_base.uf2`, and you can see and hear the demo.
 **You need a Raspberry Pi Pico 2!**
+
+![Prototype build on perfboard](images/hardware-build.jpg)
+*The prototype on perfboard: Pico 2, VGA DAC, PS/2 level shifter,
+micro-SD adapter and reset button.*
 
 | GPIO | Function | Series resistor |
 |---|---|---|

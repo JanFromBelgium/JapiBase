@@ -1,4 +1,5 @@
 build/
+Pictures/
 *.uf2
 *.elf
 *.o
