@@ -54,7 +54,8 @@ int main(void) {
     vga_print(VGA_ROWS - 2, 3, "Same source compiles for the Pico - this is the host backend.",
               VGA_GREEN, VGA_BLACK);
 
+    vga_print(VGA_ROWS - 3, 3, "Press Enter to exit...", VGA_WHITE, VGA_BLACK);
     vga_wait_vblank();          /* present one frame */
-    printf("\n");               /* drop the prompt below the grid */
+    getchar();                  /* hold the alt-screen so it stays visible */
     return 0;
 }
