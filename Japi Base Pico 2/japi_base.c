@@ -473,6 +473,14 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
                 case 0x7C: result = JAPI_KEY_PRTSCR;   break;
             }
             ps2_extended = false;
+            // Editor selection: emit modifier variants for the navigation
+            // codes only (0x0101..0x010A). Numpad/PrtScr from this switch
+            // are out of range and pass through unchanged.
+            if (result >= JAPI_KEY_UP && result <= JAPI_KEY_DELETE) {
+                if (ps2_ctrl_any && ps2_shift_any) result += 0x80;
+                else if (ps2_shift_any)            result += 0x60;
+                else if (ps2_ctrl_any)             result += 0x70;
+            }
             if (result) kbd_push(result);
             continue;
         }
@@ -543,6 +551,15 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
             if (!ps2_ctrl_any && ps2_caps_lock) {
                 if (result >= 'a' && result <= 'z') result -= 32;
                 else if (result >= 'A' && result <= 'Z') result += 32;
+            }
+            // Left-Alt + letter -> menu accelerator code (Alt+F, ...).
+            // Right-Alt (AltGr) is excluded so the keyboard layout (ù µ £)
+            // keeps working unchanged.
+            if (ps2_alt_l && !ps2_altgr) {
+                if (result >= 'a' && result <= 'z')
+                    result = JAPI_KEY_ALT_BASE | (result - 32);
+                else if (result >= 'A' && result <= 'Z')
+                    result = JAPI_KEY_ALT_BASE | result;
             }
             if (result) kbd_push(result);
         }

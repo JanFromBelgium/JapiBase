@@ -116,6 +116,46 @@
 #define JAPI_KEY_PRTSCR      0x0152
 #define JAPI_KEY_PAUSE       0x0153
 
+// Modified navigation (editor selection / block select).
+// Offsets from the base nav codes 0x0101..0x010A:
+//   Shift = +0x60, Ctrl = +0x70, Ctrl+Shift = +0x80
+#define JAPI_KEY_SUP        0x0161   // Shift + navigation
+#define JAPI_KEY_SDOWN      0x0162
+#define JAPI_KEY_SLEFT      0x0163
+#define JAPI_KEY_SRIGHT     0x0164
+#define JAPI_KEY_SHOME      0x0165
+#define JAPI_KEY_SEND       0x0166
+#define JAPI_KEY_SPGUP      0x0167
+#define JAPI_KEY_SPGDN      0x0168
+#define JAPI_KEY_SINSERT    0x0169
+#define JAPI_KEY_SDELETE    0x016A
+#define JAPI_KEY_CUP        0x0171   // Ctrl + navigation
+#define JAPI_KEY_CDOWN      0x0172
+#define JAPI_KEY_CLEFT      0x0173
+#define JAPI_KEY_CRIGHT     0x0174
+#define JAPI_KEY_CHOME      0x0175
+#define JAPI_KEY_CEND       0x0176
+#define JAPI_KEY_CPGUP      0x0177
+#define JAPI_KEY_CPGDN      0x0178
+#define JAPI_KEY_CINSERT    0x0179
+#define JAPI_KEY_CDELETE    0x017A
+#define JAPI_KEY_CSUP       0x0181   // Ctrl+Shift + navigation (block select)
+#define JAPI_KEY_CSDOWN     0x0182
+#define JAPI_KEY_CSLEFT     0x0183
+#define JAPI_KEY_CSRIGHT    0x0184
+#define JAPI_KEY_CSHOME     0x0185
+#define JAPI_KEY_CSEND      0x0186
+#define JAPI_KEY_CSPGUP     0x0187
+#define JAPI_KEY_CSPGDN     0x0188
+#define JAPI_KEY_CSINSERT   0x0189
+#define JAPI_KEY_CSDELETE   0x018A
+
+// Left-Alt + letter = menu accelerator (Alt+F = File, ...).
+// Code = JAPI_KEY_ALT_BASE | uppercase letter, e.g. JAPI_KEY_ALT('F').
+// Right-Alt (AltGr) is unaffected and keeps doing the keyboard layout.
+#define JAPI_KEY_ALT_BASE   0x0200
+#define JAPI_KEY_ALT(c)     (JAPI_KEY_ALT_BASE | (uint16_t)(c))
+
 // =========================================================================
 // VGA DATA STRUCTURES
 // =========================================================================
