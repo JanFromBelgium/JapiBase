@@ -31,13 +31,13 @@ static void sim_term_restore(void) {
 
 static void sim_render(void) {
     if (!sim_term_ready) {
-        fputs("\033[?1049h\033[?25l", stdout);     /* alt-screen, hide cursor */
+        fputs("\033[?1049h\033[?25l\033[2J", stdout); /* alt-screen, hide cursor, clear */
         atexit(sim_term_restore);
         sim_term_ready = 1;
     }
-    fputs("\033[H", stdout);                       /* cursor home */
-    int pf = -1, pb = -1;                          /* previous fg/bg (force first SGR) */
     for (int r = 0; r < VGA_ROWS; r++) {
+        printf("\033[%d;1H", r + 1);               /* absolute row pos -> no scrolling */
+        int pf = -1, pb = -1;                      /* force SGR at start of each row */
         for (int c = 0; c < VGA_COLS; c++) {
             vga_char_t ch = vga_text_buffer[r][c];
             if (ch.fg != pf || ch.bg != pb) {
@@ -49,8 +49,7 @@ static void sim_render(void) {
             unsigned char g = ch.code;
             putchar((g >= 32 && g < 127) ? g : ' ');
         }
-        fputs("\033[0m\r\n", stdout);
-        pf = pb = -1;                              /* reset attrs at line end */
+        fputs("\033[0m", stdout);                  /* reset, no newline (no scroll) */
     }
     fflush(stdout);
 }
