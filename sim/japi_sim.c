@@ -1,0 +1,85 @@
+/* Japi Base host simulator — Linux backend for the Japi Base API.
+ *
+ * Implements the same symbols as the Pico's japi_base.c so editor/app code
+ * written against japi_base.h compiles and runs unchanged on the dev machine.
+ * Dependency-free: pure C + (later) ANSI terminal. No curses/SDL.
+ *
+ * Status: SKELETON (plan step 2). Text buffer writes are real; the ANSI
+ * renderer, keyboard, and file I/O are stubs filled in steps 3-6.
+ */
+#include <string.h>
+#include <stdio.h>
+#include "japi_base.h"
+
+/* --- Shared state (same as the platform exposes) --- */
+vga_char_t vga_text_buffer[VGA_ROWS][VGA_COLS];
+uint8_t    japi_keymap[768] = {0};
+
+/* --- Init --- */
+void japi_init(void) {
+    memset(vga_text_buffer, 0, sizeof(vga_text_buffer));
+}
+
+/* --- VGA text API (real buffer writes; renderer added in step 3) --- */
+void vga_clear(uint8_t fg, uint8_t bg) {
+    for (int r = 0; r < VGA_ROWS; r++)
+        for (int c = 0; c < VGA_COLS; c++) {
+            vga_text_buffer[r][c].code = ' ';
+            vga_text_buffer[r][c].fg   = fg;
+            vga_text_buffer[r][c].bg   = bg;
+        }
+}
+
+void vga_set_char(int row, int col, uint8_t code, uint8_t fg, uint8_t bg) {
+    if (row < 0 || row >= VGA_ROWS || col < 0 || col >= VGA_COLS) return;
+    vga_text_buffer[row][col].code = code;
+    vga_text_buffer[row][col].fg   = fg;
+    vga_text_buffer[row][col].bg   = bg;
+}
+
+void vga_print(int row, int col, const char *str, uint8_t fg, uint8_t bg) {
+    if (row < 0 || row >= VGA_ROWS) return;
+    for (int i = 0; str[i] && (col + i) < VGA_COLS; i++)
+        vga_set_char(row, col + i, (uint8_t)str[i], fg, bg);
+}
+
+void vga_wait_vblank(void) { /* no-op on host (step 3 may add a tiny sleep) */ }
+
+void vga_redefine_char(uint8_t code, const uint8_t bitmap[FONT_H]) {
+    (void)code; (void)bitmap;   /* font not modelled in the text simulator */
+}
+
+/* --- Bitmap overlay: not modelled in the text simulator (stubs) --- */
+bool     japi_bitmap_open(int c,int r,int w,int h,int s){(void)c;(void)r;(void)w;(void)h;(void)s;return false;}
+void     japi_bitmap_close(void){}
+void     japi_bitmap_pixel(int x,int y,uint8_t v){(void)x;(void)y;(void)v;}
+void     japi_bitmap_clear(uint8_t v){(void)v;}
+uint8_t *japi_bitmap_buffer(void){return 0;}
+int      japi_bitmap_width(void){return 0;}
+int      japi_bitmap_height(void){return 0;}
+
+/* --- Keyboard: ring buffer filled in step 4 --- */
+bool     japi_has_char(void){return false;}
+uint16_t japi_get_char(void){return 0;}
+
+/* --- Sound: no-ops on host --- */
+void japi_play(uint8_t n,uint16_t d){(void)n;(void)d;}
+void japi_play_ch(int c,uint8_t n,uint16_t d){(void)c;(void)n;(void)d;}
+void japi_sound_wave(int c,uint8_t t){(void)c;(void)t;}
+void japi_sound_freq(int c,uint16_t h){(void)c;(void)h;}
+void japi_sound_volume(int c,uint8_t v){(void)c;(void)v;}
+void japi_sound_pan(int c,uint8_t p){(void)c;(void)p;}
+void japi_sound_envelope(int c,uint16_t a,uint16_t d,uint8_t s,uint16_t r){(void)c;(void)a;(void)d;(void)s;(void)r;}
+void japi_sound_note_on(int c){(void)c;}
+void japi_sound_note_off(int c){(void)c;}
+void japi_sound_off(void){}
+
+/* --- File I/O: stdio-backed in step 6 --- */
+bool japi_fopen(japi_file_t *f,const char *p,uint8_t m){(void)f;(void)p;(void)m;return false;}
+int  japi_fread(japi_file_t *f,void *b,int n){(void)f;(void)b;(void)n;return -1;}
+int  japi_fwrite(japi_file_t *f,const void *b,int n){(void)f;(void)b;(void)n;return -1;}
+void japi_fclose(japi_file_t *f){(void)f;}
+bool japi_remove(const char *p){(void)p;return false;}
+bool japi_mkdir(const char *p){(void)p;return false;}
+bool japi_exists(const char *p){(void)p;return false;}
+int  japi_fsize(japi_file_t *f){(void)f;return -1;}
