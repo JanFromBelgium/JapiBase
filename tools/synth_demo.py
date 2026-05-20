@@ -7,7 +7,7 @@ exactly what the built-in 6-channel synth would sound like.
 Sample rate: 48360 Hz (806 scanlines × 60 Hz), 16-bit stereo.
 """
 
-import wave, struct, math, random
+import wave, struct, math, random, os, sys
 
 SAMPLE_RATE = 48360
 DURATION = 8.0
@@ -298,7 +298,10 @@ for i in range(NUM_SAMPLES):
 
 # --- Write WAV ---
 
-filename = '/home/jan/Japi/synth_demo.wav'
+# Default output sits next to the script (tools/synth_demo.wav); override
+# with `python3 synth_demo.py path/to/out.wav`.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+filename = sys.argv[1] if len(sys.argv) > 1 else os.path.join(_HERE, "synth_demo.wav")
 with wave.open(filename, 'w') as wf:
     wf.setnchannels(2)
     wf.setsampwidth(2)
