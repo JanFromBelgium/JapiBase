@@ -129,7 +129,9 @@ void sim_type(const char *s) {
  * common CSI/SS3 escape sequences to JAPI_KEY_* codes, pushing them into the
  * same ring buffer as the injection API. Pumped from has_char/get_char and
  * vga_wait_vblank so editor/app code is unchanged vs hardware. ISIG is off so
- * Ctrl+C/Z arrive as codes 3/26 (an editor needs them); ESC is the quit key.
+ * Ctrl+C/Z arrive as keys (an editor needs them); ESC is the quit key. Ctrl +
+ * letter maps to JAPI_KEY_CTRL(uppercase letter) to match the platform driver,
+ * with the conventional Ctrl+H/I/M = BS/TAB/ENTER exceptions.
  */
 static int sim_raw_on = 0;
 static struct termios sim_tios_orig;
@@ -193,7 +195,12 @@ static void sim_pump(void) {
         if (c == 0x1b)  { sim_key_push(JAPI_KEY_ESCAPE);    i++; continue; }
         if (c == 0x7f)  { sim_key_push(JAPI_KEY_BACKSPACE); i++; continue; }
         if (c == '\r' || c == '\n') { sim_key_push(0x000D); i++; continue; }
-        sim_key_push(c);                                /* printable + Ctrl-letters + Tab */
+        if (c == '\t')  { sim_key_push(JAPI_KEY_TAB);       i++; continue; }
+        if (c >= 1 && c <= 26) {                       /* Ctrl + letter */
+            sim_key_push(JAPI_KEY_CTRL_BASE | ('A' + c - 1));
+            i++; continue;
+        }
+        sim_key_push(c);                                /* printable byte */
         i++;
     }
 }

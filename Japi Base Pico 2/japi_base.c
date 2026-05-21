@@ -91,6 +91,17 @@ uint16_t japi_get_char(void) {
     return c;
 }
 
+uint8_t japi_kbd_modifier_state(void) {
+    return (ps2_shift_l ? JAPI_MOD_SHIFT_L : 0)
+         | (ps2_shift_r ? JAPI_MOD_SHIFT_R : 0)
+         | (ps2_ctrl_l  ? JAPI_MOD_CTRL_L  : 0)
+         | (ps2_ctrl_r  ? JAPI_MOD_CTRL_R  : 0)
+         | (ps2_alt_l   ? JAPI_MOD_ALT_L   : 0)
+         | (ps2_altgr   ? JAPI_MOD_ALTGR   : 0)
+         | (ps2_gui_l   ? JAPI_MOD_GUI_L   : 0)
+         | (ps2_gui_r   ? JAPI_MOD_GUI_R   : 0);
+}
+
 static inline void __not_in_flash_func(kbd_push)(uint16_t c) {
     int next = (kbd_head + 1) % JAPI_KBD_BUF_SIZE;
     if (next != kbd_tail) {
@@ -545,8 +556,16 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
 
             result = (index < 768) ? japi_keymap[index] : 0;
             if (ps2_ctrl_any) {
-                if (result >= 'a' && result <= 'z') result = result - 'a' + 1;
-                else if (result >= 'A' && result <= 'Z') result = result - 'A' + 1;
+                // Ctrl + letter -> JAPI_KEY_CTRL(uppercase letter), with
+                // conventional exceptions: Ctrl+H/I/M still emit BS/TAB/ENTER
+                // so those keys behave like their dedicated counterparts.
+                char up = 0;
+                if (result >= 'a' && result <= 'z')      up = result - 32;
+                else if (result >= 'A' && result <= 'Z') up = result;
+                if (up == 'H')      result = JAPI_KEY_BACKSPACE;
+                else if (up == 'I') result = JAPI_KEY_TAB;
+                else if (up == 'M') result = JAPI_KEY_ENTER;
+                else if (up)        result = JAPI_KEY_CTRL_BASE | up;
             }
             if (!ps2_ctrl_any && ps2_caps_lock) {
                 if (result >= 'a' && result <= 'z') result -= 32;

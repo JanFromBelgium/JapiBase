@@ -156,6 +156,14 @@
 #define JAPI_KEY_ALT_BASE   0x0200
 #define JAPI_KEY_ALT(c)     (JAPI_KEY_ALT_BASE | (uint16_t)(c))
 
+// Ctrl + letter = application shortcut (Ctrl+S = save, Ctrl+C/V/X = clipboard).
+// Code = JAPI_KEY_CTRL_BASE | uppercase letter, e.g. JAPI_KEY_CTRL('S') = 0x0353.
+// Conventional exceptions: Ctrl+H/I/M keep emitting BACKSPACE / TAB / ENTER
+// (matches terminal convention and what the user expects when pressing those
+// keys instead of the dedicated key).
+#define JAPI_KEY_CTRL_BASE  0x0300
+#define JAPI_KEY_CTRL(c)    (JAPI_KEY_CTRL_BASE | (uint16_t)(c))
+
 // =========================================================================
 // VGA DATA STRUCTURES
 // =========================================================================
@@ -203,6 +211,20 @@ int      japi_bitmap_height(void);
 // --- KEYBOARD ---
 bool japi_has_char(void);
 uint16_t japi_get_char(void);
+
+// Live modifier state bitmask. Bit positions:
+//   0: Shift-L   1: Shift-R   2: Ctrl-L    3: Ctrl-R
+//   4: Alt-L     5: AltGr     6: GUI-L     7: GUI-R
+// Useful for editors that want to mirror modifier indicators in their UI.
+#define JAPI_MOD_SHIFT_L 0x01
+#define JAPI_MOD_SHIFT_R 0x02
+#define JAPI_MOD_CTRL_L  0x04
+#define JAPI_MOD_CTRL_R  0x08
+#define JAPI_MOD_ALT_L   0x10
+#define JAPI_MOD_ALTGR   0x20
+#define JAPI_MOD_GUI_L   0x40
+#define JAPI_MOD_GUI_R   0x80
+uint8_t japi_kbd_modifier_state(void);
 
 // Keyboard layout table (768 bytes, loaded from LittleFS by japi_init)
 extern uint8_t japi_keymap[768];
