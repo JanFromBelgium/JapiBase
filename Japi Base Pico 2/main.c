@@ -58,7 +58,11 @@ static void draw_shadow(int r1, int c1, int r2, int c2) {
 }
 
 static uint16_t wait_key(void) {
-    while (!japi_has_char()) tight_loop_contents();
+    /* Idle on vblank so any text the page wrote before calling us
+       reaches the active (read-by-scanline) buffer; otherwise the
+       page would only become visible after the next vga_wait_vblank
+       elsewhere, which may never come on a static screen. */
+    while (!japi_has_char()) vga_wait_vblank();
     return japi_get_char();
 }
 
@@ -439,6 +443,10 @@ static void page_showcase(void) {
 
         int pos = 1;
         while (!japi_has_char()) {
+            vga_wait_vblank();   /* Publish previous iteration's writes
+                                    (and on the first pass, the whole
+                                    page_showcase initial draw). */
+
             vga_set_char(61, pos, CH_HZ, VGA_CYAN, BG);
             pos++;
             if (pos >= VGA_COLS - 1) pos = 1;
