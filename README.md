@@ -266,5 +266,16 @@ The previous Pico 1 (RP2040) prototype is archived outside this repository.
 
 ## License
 
-Released under the **MIT License** — see [`LICENSE`](LICENSE). The vendored
-libraries keep their own licenses (see their `LICENSE` / `LICENSE.txt`).
+Released under the **GNU General Public License v3 or later** — see
+[`LICENSE`](LICENSE) for the full text.
+
+The third-party libraries consolidated into `third_party_libs.c` keep their
+original notices (visible in the licence block at the top of that file):
+
+- **FatFs** (ChaN) — BSD 1-clause style
+- **SD-over-SPI driver** (Carl John Kugler III) — Apache 2.0
+- **littlefs** — BSD-3-Clause
+- **pico-lfs** (Timo Kokkonen) — GPL-3.0-or-later
+
+The GPL-3 component (pico-lfs) is what makes the combined Japi Base binary
+GPL-3 as distributed.
