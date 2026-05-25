@@ -361,4 +361,21 @@ bool japi_mkdir(const char *path);
 bool japi_exists(const char *path);
 int  japi_fsize(japi_file_t *f);
 
+/* Directory listing — opaque handle, walks entries one by one. The
+   backend (FatFs on FAT volumes, lfs on LittleFS) decides internals.
+   japi_readdir writes the entry name into name_out (NUL-terminated,
+   truncated to name_max-1 chars) and returns true on each entry, false
+   when the directory is exhausted. "." and ".." are not yielded. */
+typedef struct {
+    uint8_t type;
+    union {
+        DIR        fat;
+        lfs_dir_t  lfs;
+    };
+} japi_dir_t;
+
+bool japi_opendir(japi_dir_t *d, const char *path);
+bool japi_readdir(japi_dir_t *d, char *name_out, int name_max);
+void japi_closedir(japi_dir_t *d);
+
 #endif // JAPI_BASE_H

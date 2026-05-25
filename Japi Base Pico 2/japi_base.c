@@ -1140,3 +1140,54 @@ int japi_fsize(japi_file_t *f) {
     if (f->type == FS_LFS) return (int)lfs_file_size(&lfs, &f->lfs);
     return -1;
 }
+
+/* Directory listing. type field doubles as backend tag (FS_SD / FS_LFS /
+   FS_NONE), same as japi_file_t. "." / ".." entries are skipped. */
+bool japi_opendir(japi_dir_t *d, const char *path) {
+    const char *p = path;
+    d->type = japi_parse_drive(&p);
+    if (d->type == FS_SD && sd_mounted) {
+        char sdpath[68];
+        snprintf(sdpath, sizeof(sdpath), "0:%s", p);
+        return f_opendir(&d->fat, sdpath) == FR_OK;
+    }
+    if (d->type == FS_LFS && lfs_mounted) {
+        if (lfs_dir_open(&lfs, &d->lfs, *p ? p : "/") == LFS_ERR_OK) return true;
+    }
+    d->type = FS_NONE;
+    return false;
+}
+
+bool japi_readdir(japi_dir_t *d, char *name_out, int name_max) {
+    if (name_max <= 0) return false;
+    if (d->type == FS_SD) {
+        FILINFO fno;
+        for (;;) {
+            if (f_readdir(&d->fat, &fno) != FR_OK || fno.fname[0] == 0) return false;
+            if (fno.fname[0] == '.' && (fno.fname[1] == 0 ||
+                (fno.fname[1] == '.' && fno.fname[2] == 0))) continue;
+            strncpy(name_out, fno.fname, (size_t)name_max - 1);
+            name_out[name_max - 1] = 0;
+            return true;
+        }
+    }
+    if (d->type == FS_LFS) {
+        struct lfs_info info;
+        for (;;) {
+            int r = lfs_dir_read(&lfs, &d->lfs, &info);
+            if (r <= 0) return false;
+            if (info.name[0] == '.' && (info.name[1] == 0 ||
+                (info.name[1] == '.' && info.name[2] == 0))) continue;
+            strncpy(name_out, info.name, (size_t)name_max - 1);
+            name_out[name_max - 1] = 0;
+            return true;
+        }
+    }
+    return false;
+}
+
+void japi_closedir(japi_dir_t *d) {
+    if (d->type == FS_SD)  f_closedir(&d->fat);
+    if (d->type == FS_LFS) lfs_dir_close(&lfs, &d->lfs);
+    d->type = FS_NONE;
+}
