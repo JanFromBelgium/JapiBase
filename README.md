@@ -25,7 +25,9 @@ code, honest documentation, and no hidden defects.
   (AZERTY/QWERTY/QWERTZ); the active layout is chosen in `config.sys`.
 - **Storage** — a 360 KB LittleFS "flash floppy" (always available) plus an
   optional micro-SD card when inserted, behind one unified DOS-style file API
-  (`A:` = flash floppy, `C:` = SD card).
+  (`A:` = flash floppy, `C:` = SD card). Both file I/O (`japi_fopen` /
+  `japi_fread` / …) and directory listing (`japi_opendir` / `japi_readdir`)
+  are provided in the same API.
 - **Audio** — PWM stereo output with a built-in 4-channel wavetable synth
   (ADSR envelopes, volume/pan); advanced users can fill the sample buffer
   themselves.
@@ -215,6 +217,7 @@ int main(void) {
     japi_play(NOTE_C5, 200);                      // a short beep
 
     for (;;) {
+        vga_wait_vblank();                        // publish writes to the screen
         if (japi_has_char()) {
             uint16_t k = japi_get_char();
             if (k == JAPI_KEY_ESCAPE) break;
@@ -223,6 +226,14 @@ int main(void) {
     return 0;
 }
 ```
+
+`vga_set_char` / `vga_print` / `vga_clear` write into a back buffer; the
+scanline reads from a separate front buffer. `vga_wait_vblank()` swaps
+them during the vertical blanking interval, so each frame is shown
+atomically (no tearing, no half-finished updates), and your render can
+take longer than a single frame without consequence. The convention is
+familiar from SDL's `SDL_RenderPresent` or OpenGL's `glSwapBuffers`:
+write freely, then present once per frame.
 
 ## Repository layout
 
