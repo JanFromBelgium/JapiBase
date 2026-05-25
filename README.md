@@ -250,7 +250,7 @@ write freely, then present once per frame.
 |---|---|
 | `japi_base.c` / `.h` / `.pio` | The core engine: VGA output, keyboard input, audio output and file I/O |
 | `demo.c` / `demo.h` | Demo application (showcase, bouncing balls, Starry Night, API reference) and its dithered demo image |
-| `third_party_libs.c` / `.h` | FatFs (ChaN), SD-over-SPI driver (carlk3), littlefs, pico-lfs — all consolidated, with per-component licence headers and the SD/SPI pin glue at the bottom |
+| `third_party_libs.c` / `.h` | Third-party libraries needed by the core engine — FatFs (ChaN), SD-over-SPI driver (carlk3), littlefs, pico-lfs — all consolidated, with per-component licence headers and the SD/SPI pin glue at the bottom |
 | `font_8x12.h` | 8×12 bitmap font, CP437 + box-drawing glyphs |
 | `japi_kbd_defaults.h` | Built-in PS/2 keyboard layouts (AZERTY/QWERTY/QWERTZ) |
 | `CMakeLists.txt`, `pico_sdk_import.cmake` | Build configuration / Pico SDK loader |
