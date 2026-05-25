@@ -32,7 +32,24 @@
 
 #include "third_party_libs.h"
 #include "japi_base.h"   /* SD/SPI pin defines used by the hardware config block at the bottom */
-#include "my_debug.h"
+
+/* ===========================================================================
+ * Debug-print macros used by the carlk3 SD driver below.
+ * Everything is routed to printf, which goes out the UART (the firmware
+ * enables stdio_uart in CMakeLists). Hook up a USB-serial cable to see
+ * SD-related diagnostics; otherwise these are silent.
+ * ===========================================================================
+ */
+#define DBG_PRINTF(fmt, ...)  printf(fmt, ##__VA_ARGS__)
+#define debug_print(fmt, ...) printf(fmt, ##__VA_ARGS__)
+#define debug_init()          ((void)0)
+
+#ifndef myASSERT
+#define myASSERT(cond) if(!(cond)) { \
+    printf("\n--- ASSERT FAILED ---\nFile: %s\nLine: %d\n", __FILE__, __LINE__); \
+    while(1) { tight_loop_contents(); } \
+}
+#endif
 
 /* ===== diskio.h (private FatFs<->driver interface) ===== */
 /*-----------------------------------------------------------------------/
@@ -23072,7 +23089,6 @@ specific language governing permissions and limitations under the License.
 #include "pico/mutex.h"
 #include "pico/sem.h"
 //
-#include "my_debug.h"
 //
 
 static bool irqChannel1 = false;
@@ -23325,7 +23341,6 @@ specific language governing permissions and limitations under the License.
 //
 #include "hardware/gpio.h"
 //
-#include "my_debug.h"
 
 #define TRACE_PRINTF(fmt, args...)
 /* #define TRACE_PRINTF printf  // task_printf */
@@ -23597,7 +23612,6 @@ specific language governing permissions and limitations under the License.
 //
 #include "pico/mutex.h"
 //
-#include "my_debug.h"
 //
 //
 //
