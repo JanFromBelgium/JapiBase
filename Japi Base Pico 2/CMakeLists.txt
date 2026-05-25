@@ -11,7 +11,6 @@ pico_sdk_init()
 add_executable(japi_base
     main.c
     japi_base.c
-    hw_config.c
     third_party_libs.c
 )
 

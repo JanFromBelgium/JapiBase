@@ -6,6 +6,19 @@
 #include "third_party_libs.h"
 
 // =========================================================================
+// SD CARD / SPI PIN CONFIGURATION (Japi Base hardware choices)
+// =========================================================================
+// Wired to spi1 on the left side of the Pico 2 (USB at top).
+// Change these if you build a board with different pin assignments;
+// the carlk3 SD-over-SPI driver in third_party_libs.c picks them up via
+// the spi_t / sd_card_t struct instances defined at the bottom of that file.
+#define PIN_SD_MISO     12  // RX
+#define PIN_SD_MOSI     11  // TX
+#define PIN_SD_SCK      10
+#define PIN_SD_SS       13  // CS / Chip Select
+#define SD_SPI_BAUD     1000000  // 1 MHz: plenty for config-time SD access, very stable
+
+// =========================================================================
 // SCREEN DIMENSIONS
 // =========================================================================
 #define VGA_COLS        127
