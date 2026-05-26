@@ -243,6 +243,7 @@ write freely, then present once per frame.
 | `images/` | Screenshots and GIFs used in this README |
 | `LICENSE` | GNU GPL v3 |
 | `README.md` | This file |
+| `context.md` | Project conventions and workflow for AI-assisted coding |
 
 ### Firmware files (`Japi Base Pico 2/`)
 
