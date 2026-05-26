@@ -59,7 +59,7 @@ any blur in these photos is the camera, not the hardware.*
 ![Showcase page](images/demo-showcase.jpg)
 *Showcase: palette, character set, waveform bitmap and 4-channel music.*
 
-![Bouncing balls](images/demo-balls.gif)
+<img src="images/demo-balls.gif" alt="Bouncing balls" width="100%">
 
 *Bouncing balls — flicker-free on a solid felt background.*
 [▶ Full video (14 MB MP4)](https://github.com/JanFromBelgium/japi-base/releases/download/v0.1/japi-bouncing-balls.mp4)
