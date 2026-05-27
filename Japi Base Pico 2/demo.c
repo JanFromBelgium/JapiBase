@@ -790,14 +790,39 @@ static void page_api(void) {
     vga_print(47, R1 + 2, "// AZERTY_BE  AZERTY_FR  QWERTY_BE",     VGA_GREEN, BG);
     vga_print(48, R1 + 2, "// QWERTY_UK  QWERTY_US  QWERTZ_DE",     VGA_GREEN, BG);
 
-    // === KEYBOARD TEST (right panel, rows 50-60) ===
-    draw_titled_box(50, R1, 60, R2, " Keyboard Test ", VGA_GREEN, BG);
-    vga_print(51, R1 + 2, "Char:",                                    VGA_WHITE, BG);
-    vga_print(51, R1 + 30, "Hex:",                                    VGA_WHITE, BG);
-    vga_print(52, R1 + 2, "Type:",                                    VGA_WHITE, BG);
-    int type_row = 54, type_col = R1 + 2;
+    // === DIRECTORY LISTING ON C: (right panel, rows 50-55) ===
+    // Visible confirmation that Japi Base can read files from the SD
+    // card -- the user does not need to write any code to see that the
+    // storage works. Up to 4 entries shown; if the card is absent or
+    // empty we say so explicitly.
+    draw_titled_box(50, R1, 55, R2, " Files on C:\\ ", VGA_GREEN, BG);
+    {
+        japi_dir_t d;
+        if (!japi_opendir(&d, "C:")) {
+            vga_print(51, R1 + 2, "(no SD card inserted)", VGA_CYAN, BG);
+        } else {
+            char name[64];
+            int shown = 0;
+            while (shown < 4 && japi_readdir(&d, name, sizeof(name))) {
+                if (strlen(name) > 40) name[40] = 0;
+                vga_print(51 + shown, R1 + 2, name, VGA_WHITE, BG);
+                shown++;
+            }
+            japi_closedir(&d);
+            if (shown == 0) {
+                vga_print(51, R1 + 2, "(SD card is empty)", VGA_CYAN, BG);
+            }
+        }
+    }
+
+    // === KEYBOARD TEST (right panel, rows 56-62) ===
+    draw_titled_box(56, R1, 62, R2, " Keyboard Test ", VGA_GREEN, BG);
+    vga_print(57, R1 + 2,  "Char:",                                   VGA_WHITE, BG);
+    vga_print(57, R1 + 18, "Hex:",                                    VGA_WHITE, BG);
+    vga_print(57, R1 + 36, "Type:",                                   VGA_WHITE, BG);
+    int type_row = 58, type_col = R1 + 2;
     int type_left = R1 + 2, type_right = R2 - 2;
-    int type_top = 54, type_bottom = 59;
+    int type_top = 58, type_bottom = 61;
     for (int r = type_top; r <= type_bottom; r++)
         for (int c = type_left; c <= type_right; c++)
             vga_set_char(r, c, ' ', VGA_WHITE, 0x02);
@@ -810,12 +835,12 @@ static void page_api(void) {
         uint16_t c = wait_key();
 
         char hex_buf[24];
-        snprintf(hex_buf, sizeof(hex_buf), "0x%04X    ", c);
-        vga_print(51, R1 + 35, hex_buf, VGA_CYAN, BG);
+        snprintf(hex_buf, sizeof(hex_buf), "0x%04X  ", c);
+        vga_print(57, R1 + 23, hex_buf, VGA_CYAN, BG);
 
         // Translate numpad keys (NumLock ON) to their ASCII equivalents so the
         // typing panel and "Char:" label show '5' rather than (special). The
-        // Hex: line above keeps the original code so the underlying value is
+        // Hex: column keeps the original code so the underlying value is
         // still visible.
         uint16_t disp = c;
         if (c >= JAPI_KEY_NUM0 && c <= JAPI_KEY_NUM9)  disp = '0' + (c - JAPI_KEY_NUM0);
@@ -829,16 +854,16 @@ static void page_api(void) {
         if (disp >= 0x20 && disp < 0x100) {
             char ch_buf[16];
             snprintf(ch_buf, sizeof(ch_buf), "'%c'       ", (char)disp);
-            vga_print(51, R1 + 8, ch_buf, VGA_GREEN, BG);
-            vga_print(52, R1 + 8, "ASCII          ", VGA_WHITE, BG);
+            vga_print(57, R1 + 8,  ch_buf,           VGA_GREEN,   BG);
+            vga_print(57, R1 + 42, "ASCII        ",  VGA_WHITE,   BG);
         } else if (disp < 0x20 && disp > 0) {
             char ch_buf[16];
             snprintf(ch_buf, sizeof(ch_buf), "Ctrl+%c    ", (char)(disp + 'A' - 1));
-            vga_print(51, R1 + 8, ch_buf, VGA_MAGENTA, BG);
-            vga_print(52, R1 + 8, "Control code   ", VGA_WHITE, BG);
+            vga_print(57, R1 + 8,  ch_buf,           VGA_MAGENTA, BG);
+            vga_print(57, R1 + 42, "Control code ",  VGA_WHITE,   BG);
         } else {
-            vga_print(51, R1 + 8, "(special) ", VGA_YELLOW, BG);
-            vga_print(52, R1 + 8, "Special key    ", VGA_WHITE, BG);
+            vga_print(57, R1 + 8,  "(special) ",     VGA_YELLOW,  BG);
+            vga_print(57, R1 + 42, "Special key  ",  VGA_WHITE,   BG);
         }
 
         if (c == JAPI_KEY_ESCAPE) break;
