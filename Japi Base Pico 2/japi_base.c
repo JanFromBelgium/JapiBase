@@ -983,6 +983,16 @@ void japi_init(void) {
     sm_config_set_in_pins(&c_ps2, 15);
     pio_gpio_init(pio, 14);
     gpio_pull_up(14);
+    // The SM samples the data line on the PS/2 clock's falling edge (wait
+    // instructions on GP14), so the clock rate is set by the PS/2 device, not
+    // by this divider. Running the SM at full clk_sys (260 MHz) makes it so
+    // sensitive that a few-nanosecond glitch on a noisy clock line (long jumper
+    // wires, breadboards, USB-to-PS/2 bridges) reads as a false falling edge
+    // and corrupts the bit stream. Slowing the SM to ~160 kHz low-pass filters
+    // those glitches while still oversampling the 16.7 kHz max PS/2 clock ~10x,
+    // so every real edge is caught. Thanks to forum user (Raspberry Pi forum)
+    // for diagnosing this with a USB-to-PS/2 bridge.
+    sm_config_set_clkdiv(&c_ps2, clock_get_hz(clk_sys) / 160000);
     sm_config_set_in_shift(&c_ps2, true, true, 11);
     pio_sm_init(pio, 2, offset_ps2, &c_ps2);
     pio_sm_set_enabled(pio, 2, true);
