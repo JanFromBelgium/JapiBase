@@ -908,6 +908,107 @@ static void page_api(void) {
 }
 
 // =========================================================================
+// PAGE 4: CPU BENCHMARK (shows the effect of the system clock)
+// =========================================================================
+//
+// VSync-paced animation runs at 60 Hz no matter the CPU clock, so nothing
+// elsewhere in the demo visibly changes when the clock goes up -- a faster
+// clock only buys more compute per frame. This page makes that visible: it
+// runs a fixed, deterministic integer workload and times it with the 1 MHz
+// system timer, which is independent of clk_sys, so it is an honest stopwatch.
+// Lower time / higher Mops = faster. Flash the 260 MHz and the 324 MHz build
+// and compare; the checksum must match (proof the work is identical). The loop
+// also keeps the CPU pegged, which doubles as a warm-soak stability test.
+
+#define BENCH_ITERS 20000000u
+
+// Kept in RAM so timing is not skewed by flash/XIP caching -- a fair proxy for
+// the interpreter inner loop (integer arithmetic + branches, no memory traffic).
+static uint32_t __not_in_flash_func(bench_pass)(void) {
+    uint32_t a = 1u, b = 2654435761u;
+    for (uint32_t i = 0; i < BENCH_ITERS; i++) {
+        a = a * 1103515245u + 12345u;   // LCG step
+        a ^= a >> 13;
+        a += b;
+        b = (b << 1) | (b >> 31);       // rotate left
+        b ^= a;
+    }
+    return a ^ b;
+}
+
+static void page_benchmark(void) {
+    vga_clear(VGA_BLACK, BG);
+
+    for (int c = 0; c < VGA_COLS; c++) vga_set_char(0, c, ' ', VGA_BLACK, VGA_CYAN);
+    vga_print(0, 2, "JAPI BASE  -  CPU Benchmark", VGA_BLACK, VGA_CYAN);
+
+    char line[80];
+    snprintf(line, sizeof(line), "System clock: %d MHz   (dot clock unchanged: 1024x768@60)",
+             japi_get_cpu_clock_mhz());
+    vga_print(2, 2, line, VGA_YELLOW, BG);
+    vga_print(3, 2, "Fixed 20,000,000-iteration integer workload, timed each pass.",
+              VGA_WHITE, BG);
+    vga_print(4, 2, "Timer is independent of the CPU clock, so lower time = faster.",
+              VGA_GREEN, BG);
+
+    if (japi_clock_was_reverted())
+        vga_print(5, 2, "324 MHz was unstable on this board -- reverted to 260 MHz.",
+                  VGA_RED, BG);
+
+    draw_titled_box(6, 2, 14, 60, " Results ", VGA_CYAN, BG);
+
+    for (int c = 0; c < VGA_COLS; c++) vga_set_char(63, c, ' ', VGA_BLACK, VGA_WHITE);
+    vga_print(63, 2, "Shift+T = try 324 MHz   t = back to 260 MHz   ESC = showcase",
+              VGA_BLACK, VGA_WHITE);
+
+    uint64_t best = (uint64_t)-1;
+    uint32_t passes = 0;
+
+    while (true) {
+        uint64_t t0  = time_us_64();
+        uint32_t chk = bench_pass();
+        uint64_t dt  = time_us_64() - t0;
+        if (dt == 0) dt = 1;
+        if (dt < best) best = dt;
+        passes++;
+
+        // Mops/s = iterations / microseconds, kept as hundredths. BENCH_ITERS*100
+        // = 2e9 fits in 32 bits, so plain unsigned long printing is safe.
+        uint32_t dt32           = (dt > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (uint32_t)dt;
+        uint32_t best32         = (best > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (uint32_t)best;
+        uint32_t mops_x100      = BENCH_ITERS * 100u / dt32;
+        uint32_t best_mops_x100 = BENCH_ITERS * 100u / best32;
+
+        snprintf(line, sizeof(line), "Pass time : %lu.%03lu ms        ",
+                 (unsigned long)(dt32 / 1000), (unsigned long)(dt32 % 1000));
+        vga_print(8, 4, line, VGA_WHITE, BG);
+        snprintf(line, sizeof(line), "Throughput: %lu.%02lu Mops/s     ",
+                 (unsigned long)(mops_x100 / 100), (unsigned long)(mops_x100 % 100));
+        vga_print(9, 4, line, VGA_GREEN, BG);
+        snprintf(line, sizeof(line), "Best      : %lu.%03lu ms  (%lu.%02lu Mops/s)   ",
+                 (unsigned long)(best32 / 1000), (unsigned long)(best32 % 1000),
+                 (unsigned long)(best_mops_x100 / 100), (unsigned long)(best_mops_x100 % 100));
+        vga_print(10, 4, line, VGA_CYAN, BG);
+        snprintf(line, sizeof(line), "Passes    : %lu        ", (unsigned long)passes);
+        vga_print(11, 4, line, VGA_WHITE, BG);
+        snprintf(line, sizeof(line), "Checksum  : 0x%08lX  (must match across builds)",
+                 (unsigned long)chk);
+        vga_print(12, 4, line, VGA_YELLOW, BG);
+
+        vga_wait_vblank();   // push the stats to the active (scanned) buffer
+
+        if (japi_has_char()) {
+            uint16_t k = japi_get_char();
+            if (k == JAPI_KEY_ESCAPE) break;
+            // 'T' (Shift+T) switches to the 324 MHz high gear, 't' back to 260.
+            // Both persist the choice and reboot, so neither returns here.
+            if (k == 'T') japi_set_cpu_clock(324);
+            if (k == 't') japi_set_cpu_clock(260);
+        }
+    }
+}
+
+// =========================================================================
 // MAIN
 // =========================================================================
 
@@ -919,5 +1020,6 @@ int main() {
         page_bitmap_balls();
         page_bitmap_photo();
         page_api();
+        page_benchmark();
     }
 }

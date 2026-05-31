@@ -9,6 +9,7 @@
 #include "hardware/irq.h"
 #include "hardware/clocks.h"
 #include "hardware/vreg.h"
+#include "hardware/watchdog.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/pwm.h"
 #include <math.h>
@@ -52,6 +53,22 @@ uint8_t japi_keymap[768] = {0};
 static int dma_chan_0;
 static int dma_chan_1;
 static volatile int scanline_counter = 0;
+
+// =========================================================================
+// CPU CLOCK STATE (runtime 260 <-> 324 MHz switch with watchdog safety net)
+// =========================================================================
+// The desired clock is persisted in flash ("cpuclock.cfg") and applied on the
+// next boot. A 324 MHz attempt is guarded by the hardware watchdog: scratch[0]
+// holds a marker that survives a watchdog reset (but not a power cycle), which
+// lets the boot code tell an intentional reboot (API) apart from a hang.
+#define JAPI_WD_TRYING_324  0x4A324254u  // "J2BT": a 324 attempt is in progress
+#define JAPI_WD_CLEAN       0x4A434C4Eu  // "JCLN": API rebooted us on purpose
+#define JAPI_WD_REVERTED    0x4A525456u  // "JRTV": last 324 attempt was reverted
+#define JAPI_WD_TIMEOUT_MS  1000         // ample vs the 60 Hz heartbeat
+
+static int  japi_active_clock_mhz = 260;
+static bool japi_wd_armed         = false;
+static bool japi_clock_reverted   = false;
 
 // =========================================================================
 // KEYBOARD ENGINE
@@ -416,6 +433,11 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
         pio0_hw->irq = 1u;
         scanline_counter = 0;
     }
+
+    // Watchdog heartbeat (only when a 324 MHz attempt armed it). As long as
+    // this Core 1 handler keeps running once per frame the chip is alive; if a
+    // glitch freezes it the watchdog reboots and the boot code reverts to 260.
+    if (japi_wd_armed && scanline_counter == 0) watchdog_update();
 
     // Poll PS/2 keyboard FIFO
     while (!pio_sm_is_rx_fifo_empty(pio0, 2)) {
@@ -917,11 +939,67 @@ static void lfs_load_keyboard(void) {
     }
 }
 
+// --- CPU clock: persistent target + runtime switch API ---
+// Stored in its own little file rather than config.sys, which is reset to the
+// compiled default on every boot (see lfs_init_filesystem).
+
+static int japi_read_clock_target(void) {
+    char buf[8] = {0};
+    if (lfs_mounted && lfs_read_file("cpuclock.cfg", buf, 3) &&
+        buf[0] == '3' && buf[1] == '2' && buf[2] == '4')
+        return 324;
+    return 260;
+}
+
+static void japi_write_clock_target(int mhz) {
+    if (!lfs_mounted) return;
+    lfs_write_file("cpuclock.cfg", (mhz == 324) ? "324" : "260", 3);
+}
+
+int  japi_get_cpu_clock_mhz(void)  { return japi_active_clock_mhz; }
+bool japi_clock_was_reverted(void) { return japi_clock_reverted; }
+
+bool japi_set_cpu_clock(int mhz) {
+    if (mhz != 260 && mhz != 324) return false;
+    japi_write_clock_target(mhz);
+    // Mark this reset as intentional so the next boot does not mistake it for a
+    // 324 MHz hang, then reboot cleanly to apply the new clock + VGA program.
+    watchdog_hw->scratch[0] = JAPI_WD_CLEAN;
+    watchdog_reboot(0, 0, 0);
+    while (true) tight_loop_contents();   // never reached
+}
+
 void japi_init(void) {
+    // --- Filesystem first: the desired CPU clock lives in flash and must be
+    //     read before we set the clock and pick the matching VGA program. ---
+    lfs_init_filesystem();
+
+    // --- CPU clock selection (watchdog safety net for the 324 MHz "high gear")
+    int target = japi_read_clock_target();
+    japi_active_clock_mhz = 260;
+    japi_clock_reverted = false;
+    if (target == 324) {
+        if (watchdog_hw->scratch[0] == JAPI_WD_TRYING_324) {
+            // An unplanned reset interrupted a 324 MHz attempt: this board
+            // cannot hold 324, so revert to 260 and always come back up.
+            japi_write_clock_target(260);
+            watchdog_hw->scratch[0] = JAPI_WD_REVERTED;
+            japi_clock_reverted = true;
+        } else {
+            // Fresh attempt (intentional API reboot, power-up or first run):
+            // arm the watchdog, then commit to 324. A hang anywhere from here
+            // resets within JAPI_WD_TIMEOUT_MS and reverts on the next boot.
+            watchdog_hw->scratch[0] = JAPI_WD_TRYING_324;
+            watchdog_enable(JAPI_WD_TIMEOUT_MS, true);
+            japi_wd_armed = true;
+            japi_active_clock_mhz = 324;
+        }
+    }
+
     // --- Clock setup ---
     vreg_set_voltage(VREG_VOLTAGE_1_30);
     sleep_ms(10);
-    set_sys_clock_khz(JAPI_SYS_CLOCK_KHZ, true);
+    set_sys_clock_khz(japi_active_clock_mhz * 1000, true);
 
     // --- Audio PWM ---
     audio_init();
@@ -943,15 +1021,17 @@ void japi_init(void) {
     PIO pio = pio0;
 
     // --- HSync & Pixel SM (SM0) ---
-    // The 325 MHz build uses a 5-cycles/pixel program so the dot clock stays
-    // 65 MHz; the default 260 MHz build uses the 4-cycles/pixel program.
-#if JAPI_OVERCLOCK_325
-    uint offset_h = pio_add_program(pio, &vga_hsync_pixels_oc325_program);
-    pio_sm_config c_h = vga_hsync_pixels_oc325_program_get_default_config(offset_h);
-#else
-    uint offset_h = pio_add_program(pio, &vga_hsync_pixels_program);
-    pio_sm_config c_h = vga_hsync_pixels_program_get_default_config(offset_h);
-#endif
+    // At 324 MHz the 5-cycles/pixel program keeps the dot clock at 65 MHz; at
+    // 260 MHz the 4-cycles/pixel program does. Chosen at runtime from the clock.
+    uint offset_h;
+    pio_sm_config c_h;
+    if (japi_active_clock_mhz >= 324) {
+        offset_h = pio_add_program(pio, &vga_hsync_pixels_oc325_program);
+        c_h = vga_hsync_pixels_oc325_program_get_default_config(offset_h);
+    } else {
+        offset_h = pio_add_program(pio, &vga_hsync_pixels_program);
+        c_h = vga_hsync_pixels_program_get_default_config(offset_h);
+    }
     uint sm_h = 0;
     sm_config_set_sideset_pins(&c_h, PIN_HSYNC);
     sm_config_set_out_pins(&c_h, PIN_RGB_BASE, 6);
@@ -1026,7 +1106,7 @@ void japi_init(void) {
                           VGA_WIDTH / 4, false);
 
     // --- LittleFS: load keyboard layout from flash (before Core 1!) ---
-    lfs_init_filesystem();
+    // (filesystem was already mounted at the top of japi_init for the clock cfg)
     lfs_load_keyboard();
 
     // --- Pre-render first two lines ---

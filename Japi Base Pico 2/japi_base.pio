@@ -98,11 +98,11 @@ pixel_loop:
 ;
 ; Identical VESA 1024x768@60 pixel/porch structure as PROGRAM 1, but with 5
 ; PIO cycles per pixel instead of 4, so the dot clock is clk_sys / 5 with an
-; integer divider (no jitter). At the build's 324.000 MHz that is a 64.8 MHz
-; dot clock (~59.8 Hz) — exact 325.000 is not PLL-attainable, see japi_base.h.
-; Every pixel/porch count is the PROGRAM 1 value × 5/4. Selected at build time
-; by JAPI_OVERCLOCK_325 (see japi_base.h). The CPU gets 6720 cycles/scanline
-; (vs 5376 at 260 MHz) for rendering + keyboard + sound.
+; integer divider (no jitter). At 324.000 MHz that is a 64.8 MHz dot clock
+; (~59.8 Hz); exact 325.000 is not PLL-attainable from the 12 MHz crystal.
+; Every pixel/porch count is the PROGRAM 1 value × 5/4. Chosen at runtime by
+; japi_init() when the CPU clock is 324 MHz (see japi_set_cpu_clock). The CPU
+; gets 6720 cycles/scanline (vs 5376 at 260 MHz) for rendering + keyboard + sound.
 ;
 ;   Visible:      1024 px / 5120 cyc
 ;   Front Porch:    24 px /  120 cyc
