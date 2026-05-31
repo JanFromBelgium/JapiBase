@@ -36,9 +36,14 @@ target_include_directories(japi_base PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}
 )
 
+# Phase A test build: -DJAPI_OVERCLOCK_325=ON runs the CPU at 325 MHz with a
+# 5-cycles/pixel VGA program (dot clock stays 65 MHz). Off by default (260 MHz).
+option(JAPI_OVERCLOCK_325 "Build the 325 MHz overclock test firmware" OFF)
+
 target_compile_definitions(japi_base PRIVATE
     LFS_THREADSAFE=1
     LFS_NO_DEBUG=1
+    $<$<BOOL:${JAPI_OVERCLOCK_325}>:JAPI_OVERCLOCK_325=1>
 )
 
 pico_add_extra_outputs(japi_base)

@@ -6,6 +6,36 @@
 #include "third_party_libs.h"
 
 // =========================================================================
+// CPU CLOCK / OVERCLOCK (Phase A silicon characterisation — see notes)
+// =========================================================================
+// The default 260 MHz is the proven-stable clock used by every release.
+// Setting JAPI_OVERCLOCK_325 to 1 builds a test firmware that runs the CPU
+// at ~325 MHz instead, with a 5-cycles/pixel VGA program (vs 4 at 260) so the
+// picture timing is essentially unchanged and only the CPU runs faster.
+//
+// Why 324.000 and not 325.000: a clean 65 MHz dot clock wants clk_sys to be
+// an exact multiple of 65 (195/260/390 are all PLL-attainable via VCO=780).
+// But 65x5 = 325.000 MHz is NOT attainable from the 12 MHz crystal (closest
+// is 325.5), so set_sys_clock_khz(325000, true) would hang at boot. 324.000
+// IS exactly attainable, giving a 64.8 MHz dot clock (-0.3%, ~59.8 Hz) with a
+// jitter-free integer divider — far inside any monitor's tolerance.
+//
+// This is NOT for release: ~325 MHz is opt-in and per-chip. Use it to test
+// individual Pico 2 boards (cold boot AND a long warm soak with sound +
+// rendering busy). If a board misbehaves, that board simply runs the default
+// 260. Do not ship it as the default until measured yield supports it.
+// Recovery from a failed overclock is a plain BOOTSEL re-flash.
+#ifndef JAPI_OVERCLOCK_325
+#define JAPI_OVERCLOCK_325 0
+#endif
+
+#if JAPI_OVERCLOCK_325
+#define JAPI_SYS_CLOCK_KHZ 324000   // nearest exactly-attainable ~325 MHz
+#else
+#define JAPI_SYS_CLOCK_KHZ 260000
+#endif
+
+// =========================================================================
 // SD CARD / SPI PIN CONFIGURATION (Japi Base hardware choices)
 // =========================================================================
 // Wired to spi1 on the left side of the Pico 2 (USB at top).

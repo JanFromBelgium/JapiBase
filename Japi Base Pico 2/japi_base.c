@@ -921,7 +921,7 @@ void japi_init(void) {
     // --- Clock setup ---
     vreg_set_voltage(VREG_VOLTAGE_1_30);
     sleep_ms(10);
-    set_sys_clock_khz(260000, true);
+    set_sys_clock_khz(JAPI_SYS_CLOCK_KHZ, true);
 
     // --- Audio PWM ---
     audio_init();
@@ -943,9 +943,16 @@ void japi_init(void) {
     PIO pio = pio0;
 
     // --- HSync & Pixel SM (SM0) ---
+    // The 325 MHz build uses a 5-cycles/pixel program so the dot clock stays
+    // 65 MHz; the default 260 MHz build uses the 4-cycles/pixel program.
+#if JAPI_OVERCLOCK_325
+    uint offset_h = pio_add_program(pio, &vga_hsync_pixels_oc325_program);
+    pio_sm_config c_h = vga_hsync_pixels_oc325_program_get_default_config(offset_h);
+#else
     uint offset_h = pio_add_program(pio, &vga_hsync_pixels_program);
-    uint sm_h = 0;
     pio_sm_config c_h = vga_hsync_pixels_program_get_default_config(offset_h);
+#endif
+    uint sm_h = 0;
     sm_config_set_sideset_pins(&c_h, PIN_HSYNC);
     sm_config_set_out_pins(&c_h, PIN_RGB_BASE, 6);
     sm_config_set_fifo_join(&c_h, PIO_FIFO_JOIN_TX);

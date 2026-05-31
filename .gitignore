@@ -1,4 +1,5 @@
 build/
+build*/
 Pictures/
 KiCad/
 *.uf2
