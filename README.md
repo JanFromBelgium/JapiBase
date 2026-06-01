@@ -103,6 +103,11 @@ micro-SD adapter and reset button.*
 | GP14 / GP15 | PS/2 CLK / DATA (via level shifter) | — |
 | GP16–GP28 | **free for your code** | — |
 
+### Schematic
+
+![Japi Base schematic](images/hardware-schematic.png)
+*The complete Japi Base schematic — VGA, PS/2 (with 5 V / 3.3 V keyboard level select), microSD, stereo audio and a GPIO breakout. [Download as PDF](Japi_Base_schematic.pdf).*
+
 ### VGA — weighted-resistor DAC
 
 Two GPIO bits per colour drive a VGA input (75 Ω terminated); sync lines go
