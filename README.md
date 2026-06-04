@@ -295,6 +295,27 @@ brief reboot that lands one tier lower.
 
 The previous Pico 1 (RP2040) prototype is archived outside this repository.
 
+## Versioning
+
+Japi Base uses a Linux-style even/odd version scheme, so the version number
+alone tells you whether a release is stable or experimental:
+
+- **Even major versions are production releases** — stable and ready to build
+  on (2.0, 2.2, 4.0 …). Bugfix-only updates increment the minor number
+  (2.0 → 2.1 → 2.2).
+- **Odd major versions are development releases** — work in progress on new
+  platform features (3.0, 3.1 …). When that work is finished and stable it
+  graduates to the next even production version.
+
+This scheme covers **Japi Base the platform only** — the I/O engine in this
+repository. Japi Base is meant to be built on: you can write your own program
+on top of it without anything else. Separate products that build on Japi Base
+— the **Japi Base Editor (JBE)** and a BASIC, together forming the full
+**Japi Base Computer** — live in their own repositories and carry their own
+version numbers. They never bump the Japi Base version on their own; the
+platform only gets a new release when the platform itself changes (for
+example, a fix in the engine that every application benefits from).
+
 ## Roadmap
 
 - A keyboard-only code editor (QuickBASIC/Turbo-Pascal look and feel) on Core 0,
