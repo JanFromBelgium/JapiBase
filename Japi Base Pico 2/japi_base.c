@@ -865,7 +865,7 @@ uint32_t get_fattime(void) { return ((uint32_t)(2026-1980)<<25)|((uint32_t)5<<21
 void* ff_memalloc(UINT size) { return malloc(size); }
 void ff_memfree(void* m) { free(m); }
 
-// LittleFS — 360K "floppy" at end of 4MB flash
+// LittleFS — 360K built-in media at the end of the 4MB flash
 #define JAPI_LFS_SIZE (360 * 1024)
 #define JAPI_LFS_OFFSET (PICO_FLASH_SIZE_BYTES - JAPI_LFS_SIZE)
 static struct lfs_config *lfs_cfg;
@@ -890,9 +890,9 @@ static bool lfs_read_file(const char *path, void *data, lfs_size_t size) {
     return br == (lfs_ssize_t)size;
 }
 
-// No lfs_populate_defaults(): a fresh floppy is EMPTY. A QWERTY_US user needs
-// no files at all; any other layout is supplied as a <name>.kbd file on the
-// removable media (A:) or copied by the user onto the floppy (C:).
+// No lfs_populate_defaults(): a fresh filesystem is EMPTY. A QWERTY_US user
+// needs no files at all; any other layout is supplied as a <name>.kbd file on
+// the removable media (A:) or copied by the user onto the built-in media (C:).
 
 static void lfs_init_filesystem(void) {
     lfs_cfg = pico_lfs_init(JAPI_LFS_OFFSET, JAPI_LFS_SIZE);
@@ -903,8 +903,8 @@ static void lfs_init_filesystem(void) {
     ctx->multicore_lockout_enabled = false;
 
     if (lfs_mount(&lfs, lfs_cfg) != LFS_ERR_OK) {
-        // Fresh flash (e.g. right after a UF2 upload): create an empty floppy
-        // and leave it empty — nothing is pre-populated.
+        // Fresh flash (e.g. right after a UF2 upload): create an empty
+        // filesystem and leave it empty — nothing is pre-populated.
         if (lfs_format(&lfs, lfs_cfg) != LFS_ERR_OK) return;
         if (lfs_mount(&lfs, lfs_cfg) != LFS_ERR_OK) return;
     }
@@ -928,7 +928,7 @@ static bool parse_keyboard_mapping(const char *buf, char *out, int outsize) {
 // Keyboard layout selection (see the flow-keyboard-target diagram):
 //   built-in QWERTY_US  ->  C: (LFS) config.sys + <name>.kbd  ->  A: (SD) ditto.
 // A mapping is only applied when its <name>.kbd file actually lives on that
-// medium, so a QWERTY_US user needs no files and an empty floppy is fine. The
+// medium, so a QWERTY_US user needs no files and an empty filesystem is fine.
 // removable media (A:) wins over the built-in media (C:).
 static void lfs_load_keyboard(void) {
     char name[32];
@@ -938,7 +938,7 @@ static void lfs_load_keyboard(void) {
     memcpy(japi_keymap, kbd_QWERTY_US, JAPI_KBD_SIZE);
 
     // 1. Built-in media (C: / LFS): a user-written config.sys may name a
-    //    mapping whose <name>.kbd file is also stored on the floppy.
+    //    mapping whose <name>.kbd file is also stored on the built-in media.
     if (lfs_mounted) {
         char buf[128] = {0};
         lfs_file_t f;
@@ -1200,7 +1200,7 @@ static uint8_t japi_parse_drive(const char **path) {
         char d = (*path)[0];
         *path += 2;
         if (d == 'A' || d == 'a') return FS_SD;   // removable media (SD card)
-        if (d == 'C' || d == 'c') return FS_LFS;  // built-in media (flash floppy)
+        if (d == 'C' || d == 'c') return FS_LFS;  // built-in media (LittleFS flash)
     }
     return FS_NONE;
 }
