@@ -21,11 +21,11 @@ code, honest documentation, and no hidden defects.
 - **Bitmap graphics** — a character-aligned bitmap window overlaid on the text
   screen. The buffer is capped at ~128 KB: up to 416×312 logical pixels at
   scale 1, or an almost full-screen 832×624 via 2×2 pixels at scale 2.
-- **PS/2 keyboard** — flexible driver with pluggable layouts
-  (AZERTY/QWERTY/QWERTZ); the active layout is chosen in `config.sys`.
+- **PS/2 keyboard** — QWERTY_US built in; any other layout (AZERTY, QWERTZ, …)
+  loads from a `<name>.kbd` file named in `config.sys` on the SD card or floppy.
 - **Storage** — a 360 KB LittleFS "flash floppy" (always available) plus an
   optional micro-SD card when inserted, behind one unified DOS-style file API
-  (`A:` = flash floppy, `C:` = SD card). Both file I/O (`japi_fopen` /
+  (`A:` = SD card, `C:` = flash floppy). Both file I/O (`japi_fopen` /
   `japi_fread` / …) and directory listing (`japi_opendir` / `japi_readdir`)
   are provided in the same API.
 - **Audio** — PWM stereo output with a built-in 4-channel wavetable synth
@@ -290,7 +290,7 @@ brief reboot that lands one tier lower.
 | `demo.c` / `demo.h` | Demo application (showcase, bouncing balls, Starry Night, API reference, CPU benchmark) and its dithered demo image |
 | `third_party_libs.c` / `.h` | Third-party libraries needed by the core engine — FatFs (ChaN), SD-over-SPI driver (carlk3), littlefs, pico-lfs — all consolidated, with per-component licence headers and the SD/SPI pin glue at the bottom |
 | `font_8x12.h` | 8×12 bitmap font, CP437 + box-drawing glyphs |
-| `japi_kbd_defaults.h` | Built-in PS/2 keyboard layouts (AZERTY/QWERTY/QWERTZ) |
+| `japi_kbd_defaults.h` | The built-in QWERTY_US keyboard layout (other layouts load from a `.kbd` file on the media) |
 | `CMakeLists.txt`, `pico_sdk_import.cmake` | Build configuration / Pico SDK loader |
 
 The previous Pico 1 (RP2040) prototype is archived outside this repository.

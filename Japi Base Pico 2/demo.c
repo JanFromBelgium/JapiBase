@@ -708,8 +708,8 @@ static void page_api(void) {
     vga_print(30, L1 + 2, "    uint8_t orange = (3<<4)|(2<<2)|0;",    VGA_YELLOW, BG);
 
     vga_print(32, L1 + 2, "    // === File I/O ===",                   VGA_GREEN, BG);
-    vga_print(33, L1 + 2, "    // Drive A: = 360K flash (always)",    VGA_GREEN, BG);
-    vga_print(34, L1 + 2, "    // Drive C: = SD card (if inserted)",  VGA_GREEN, BG);
+    vga_print(33, L1 + 2, "    // Drive A: = SD card (if inserted)",  VGA_GREEN, BG);
+    vga_print(34, L1 + 2, "    // Drive C: = 360K flash (always)",    VGA_GREEN, BG);
     vga_print(35, L1 + 2, "    // Modes: JAPI_READ JAPI_WRITE",      VGA_GREEN, BG);
     vga_print(36, L1 + 2, "    //        JAPI_APPEND",                VGA_GREEN, BG);
     vga_print(37, L1 + 2, "    japi_file_t f;",                       VGA_YELLOW, BG);
@@ -718,19 +718,19 @@ static void page_api(void) {
     vga_print(38, L1 + 23, "// read buffer",                          VGA_GREEN, BG);
 
     vga_print(40, L1 + 2, "    // Write to SD card",                  VGA_GREEN, BG);
-    vga_print(41, L1 + 2, "    if (japi_fopen(&f,\"C:hello.txt\",",   VGA_YELLOW, BG);
+    vga_print(41, L1 + 2, "    if (japi_fopen(&f,\"A:hello.txt\",",   VGA_YELLOW, BG);
     vga_print(42, L1 + 2, "                   JAPI_WRITE)) {",        VGA_YELLOW, BG);
     vga_print(43, L1 + 2, "        japi_fwrite(&f,\"Hello!\\n\",7);", VGA_YELLOW, BG);
     vga_print(44, L1 + 2, "        japi_fclose(&f);",                 VGA_YELLOW, BG);
     vga_print(45, L1 + 2, "    }",                                    VGA_YELLOW, BG);
 
     vga_print(47, L1 + 2, "    // Copy from SD to flash floppy",      VGA_GREEN, BG);
-    vga_print(48, L1 + 2, "    if (japi_fopen(&f,\"C:hello.txt\",",   VGA_YELLOW, BG);
+    vga_print(48, L1 + 2, "    if (japi_fopen(&f,\"A:hello.txt\",",   VGA_YELLOW, BG);
     vga_print(49, L1 + 2, "                   JAPI_READ)) {",         VGA_YELLOW, BG);
     vga_print(50, L1 + 2, "        int n=japi_fread(&f,buf,128);",    VGA_YELLOW, BG);
     vga_print(51, L1 + 2, "        japi_fclose(&f);",                 VGA_YELLOW, BG);
     vga_print(52, L1 + 2, "        japi_file_t f2;",                  VGA_YELLOW, BG);
-    vga_print(53, L1 + 2, "        if (japi_fopen(&f2,\"A:hello.txt\",", VGA_YELLOW, BG);
+    vga_print(53, L1 + 2, "        if (japi_fopen(&f2,\"C:hello.txt\",", VGA_YELLOW, BG);
     vga_print(54, L1 + 2, "                       JAPI_WRITE)) {",    VGA_YELLOW, BG);
     vga_print(55, L1 + 2, "            japi_fwrite(&f2,buf,n);",      VGA_YELLOW, BG);
     vga_print(56, L1 + 2, "            japi_fclose(&f2);",            VGA_YELLOW, BG);
@@ -743,11 +743,11 @@ static void page_api(void) {
     // === CODE: right panel rows 3-60 ===
 
     vga_print(3,  R1 + 2, "    // Check if file exists on flash",     VGA_GREEN, BG);
-    vga_print(4,  R1 + 2, "    if (japi_exists(\"A:hello.txt\"))",    VGA_YELLOW, BG);
+    vga_print(4,  R1 + 2, "    if (japi_exists(\"C:hello.txt\"))",    VGA_YELLOW, BG);
     vga_print(5,  R1 + 2, "        vga_print(4,0,\"OK!\",0x3F,1);",  VGA_YELLOW, BG);
 
     vga_print(7,  R1 + 2, "    // Read back from flash floppy",       VGA_GREEN, BG);
-    vga_print(8,  R1 + 2, "    if (japi_fopen(&f,\"A:hello.txt\",",   VGA_YELLOW, BG);
+    vga_print(8,  R1 + 2, "    if (japi_fopen(&f,\"C:hello.txt\",",   VGA_YELLOW, BG);
     vga_print(9,  R1 + 2, "                   JAPI_READ)) {",         VGA_YELLOW, BG);
     vga_print(10, R1 + 2, "        int n=japi_fread(&f,buf,127);",    VGA_YELLOW, BG);
     vga_print(11, R1 + 2, "        buf[n]=0;",                        VGA_YELLOW, BG);
@@ -785,20 +785,20 @@ static void page_api(void) {
     vga_print(42, R1 + 2, "// _NUM_PLUS _MINUS _MUL _NUM_DIV",      VGA_GREEN, BG);
 
     vga_print(44, R1 + 2, "// --- Keyboard Layout ---",              VGA_GREEN, BG);
-    vga_print(45, R1 + 2, "// Edit A:config.sys:",                   VGA_GREEN, BG);
-    vga_print(46, R1 + 2, "// KEYBOARD MAPPING = AZERTY_FR",         VGA_GREEN, BG);
-    vga_print(47, R1 + 2, "// AZERTY_BE  AZERTY_FR  QWERTY_BE",     VGA_GREEN, BG);
-    vga_print(48, R1 + 2, "// QWERTY_UK  QWERTY_US  QWERTZ_DE",     VGA_GREEN, BG);
+    vga_print(45, R1 + 2, "// Built-in layout: QWERTY_US",          VGA_GREEN, BG);
+    vga_print(46, R1 + 2, "// For another, put NAME.kbd and",       VGA_GREEN, BG);
+    vga_print(47, R1 + 2, "// config.sys on the SD (A:):",          VGA_GREEN, BG);
+    vga_print(48, R1 + 2, "// KEYBOARD MAPPING = AZERTY_BE",         VGA_GREEN, BG);
 
-    // === DIRECTORY LISTING ON C: (right panel, rows 50-55) ===
+    // === DIRECTORY LISTING ON A: (right panel, rows 50-55) ===
     // Visible confirmation that Japi Base can read files from the SD
     // card -- the user does not need to write any code to see that the
     // storage works. Up to 4 entries shown; if the card is absent or
     // empty we say so explicitly.
-    draw_titled_box(50, R1, 55, R2, " Files on C:\\ ", VGA_GREEN, BG);
+    draw_titled_box(50, R1, 55, R2, " Files on A:\\ ", VGA_GREEN, BG);
     {
         japi_dir_t d;
-        if (!japi_opendir(&d, "C:")) {
+        if (!japi_opendir(&d, "A:")) {
             vga_print(51, R1 + 2, "(no SD card inserted)", VGA_CYAN, BG);
         } else {
             char name[64];
