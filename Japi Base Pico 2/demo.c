@@ -130,11 +130,19 @@ static void page_showcase(void) {
     // --- Title ---
     for (int c = 0; c < VGA_COLS; c++) vga_set_char(0, c, ' ', BG, VGA_CYAN);
     vga_print(0, 3, "JAPI BASE PICO 2", VGA_BLACK, VGA_CYAN);
-    vga_print(0, 60, "RP2350 @ 260 MHz  |  Pico SDK 2.2.0", BG, VGA_CYAN);
+    char title[40];
+    snprintf(title, sizeof(title), "RP2350 @ %d MHz  |  Pico SDK 2.2.0",
+             japi_get_cpu_clock_mhz());
+    vga_print(0, 60, title, BG, VGA_CYAN);
 
     vga_print(2, 3, "VGA 1024x768 60Hz  127x64 text  64 foreground and 64 background colours.  PS/2 Keyboard.  SD Card (FatFs).", VGA_YELLOW, BG);
-    vga_print(3, 3, "Uses: PIO0 (3 SMs: HSync+pixels, VSync, PS/2), Core 1, DMA IRQ0 (SD) + IRQ1 (VGA), sys clock 260 MHz.", VGA_YELLOW, BG);
-    vga_print(4, 3, "Free: Core 0, PIO1 (4 SMs), DMA (polling only).", VGA_YELLOW, BG);
+    char uses[120];
+    snprintf(uses, sizeof(uses),
+             "Uses: PIO0 (3 SMs: HSync+pixels, VSync, PS/2), Core 1, "
+             "DMA IRQ0 (SD) + IRQ1 (VGA), sys clock %d MHz.",
+             japi_get_cpu_clock_mhz());
+    vga_print(3, 3, uses, VGA_YELLOW, BG);
+    vga_print(4, 3, "Free: Core 0, PIO1 + PIO2 (8 SMs), DMA (polling only).", VGA_YELLOW, BG);
     vga_print(4, 52, "Do NOT change sys clock or use DMA IRQ0/IRQ1 or PIO0.", VGA_RED, BG);
 
     // --- Colour Palette (compact) ---
