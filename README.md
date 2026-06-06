@@ -13,6 +13,9 @@ code, honest documentation, and no hidden defects.
 > switchable CPU clock) is working and verified on real hardware. A code editor
 > and a BASIC are planned as next steps.
 
+The complete **[Japi Base Manual](MANUAL.pdf)** (PDF) walks through building the
+board, the full C API and the demo.
+
 ## Features
 
 - **VGA output** — 1024×768 @ 60 Hz (exact VESA timing). Text mode of
@@ -108,7 +111,7 @@ micro-SD adapter and reset button.*
 ### Schematic
 
 ![Japi Base schematic](images/hardware-schematic.png)
-*The complete Japi Base schematic — VGA, PS/2 (with 5 V / 3.3 V keyboard level select), microSD, stereo audio and a GPIO breakout. [Download as PDF](Japi_Base_schematic.pdf).*
+*The complete Japi Base schematic — VGA, PS/2 (with 5 V / 3.3 V keyboard level select), microSD, stereo audio and a GPIO breakout. [Download as PDF](Japi_Base_schematic.pdf).* See the **[Japi Base Manual](MANUAL.pdf)** for the full build walk-through.
 
 ### VGA — weighted-resistor DAC
 
