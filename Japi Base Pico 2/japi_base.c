@@ -17,15 +17,39 @@
 #include "japi_base.pio.h"
 #include "third_party_libs.h"
 #include "japi_kbd_defaults.h"
+#include "pico/binary_info.h"
 
-// =========================================================================
-// HARDWARE PIN CONFIGURATION
-// =========================================================================
-#define PIN_VSYNC    0
-#define PIN_HSYNC    1
-#define PIN_RGB_BASE 2
-#define PIN_AUDIO_L  8
-#define PIN_AUDIO_R  9
+bi_decl(bi_program_version_string("Japi Base Version"));
+bi_decl(bi_program_url("https://github.com/JanFromBelgium/japi-base"));
+bi_decl(bi_program_description("Japi Base Description"));
+
+// Define some feature groups
+#define FG_VGA      0
+#define FG_AUDIO    1
+#define FG_SD_CARD  2
+#define FG_KEYB     3
+
+// Describe the feature groups
+bi_decl(bi_program_feature_group(0x1111, FG_VGA, "VGA"));
+bi_decl(bi_program_feature_group(0x1111, FG_AUDIO, "Audio"));
+bi_decl(bi_program_feature_group(0x1111, FG_SD_CARD, "SD Card"));
+bi_decl(bi_program_feature_group(0x1111, FG_KEYB, "Keyboard"));
+
+// Add some settings, which are configurable (on `japi_base.UF2` or device)
+// using picotool.
+bi_decl(bi_ptr_int32(0x1111, FG_VGA, pin_rgb_base, PIN_RGB_BASE));
+bi_decl(bi_ptr_int32(0x1111, FG_VGA, pin_hsync, PIN_HSYNC));
+bi_decl(bi_ptr_int32(0x1111, FG_VGA, pin_vsync, PIN_VSYNC));
+
+bi_decl(bi_ptr_int32(0x1111, FG_AUDIO, pin_audio_l, PIN_AUDIO_L));
+
+bi_decl(bi_ptr_int32(0x1111, FG_KEYB, pin_keyb_data, PIN_KEYB_DATA));
+bi_decl(bi_ptr_int32(0x1111, FG_KEYB, pin_keyb_clk, PIN_KEYB_CLK));
+
+bi_decl(bi_ptr_int32(0x1111, FG_SD_CARD, pin_sd_ss, PIN_SD_SS));
+bi_decl(bi_1pin_with_name(PIN_SD_MISO, "PIN_SD_MISO"));
+bi_decl(bi_1pin_with_name(PIN_SD_MOSI, "PIN_SD_MOSI"));
+bi_decl(bi_1pin_with_name(PIN_SD_SCK, "PIN_SD_SCK"));
 
 // =========================================================================
 // INTERNAL STATE
@@ -152,7 +176,9 @@ static inline void __not_in_flash_func(kbd_push)(uint16_t c) {
 // AUDIO ENGINE
 // =========================================================================
 
-#define AUDIO_PWM_SLICE   4
+// audio_pwm_slice is intitialised in audio_init and depends on the value of
+// pin_audio_l, which is set to PIN_AUDIO_L (unless configured using picotool).
+static uint32_t audio_pwm_slice;
 #define AUDIO_PWM_WRAP    6500
 #define AUDIO_SAMPLES     806
 #define AUDIO_SAMPLE_RATE 48360
@@ -276,6 +302,7 @@ static inline audio_sample_t __not_in_flash_func(synth_render_sample)(void) {
 }
 
 static void audio_init(void) {
+    audio_pwm_slice = PWM_GPIO_SLICE_NUM(pin_audio_l);
     for (int i = 0; i < WAVE_TABLE_SIZE; i++) {
         float angle = 2.0f * 3.14159265f * i / WAVE_TABLE_SIZE;
         wave_sine[i]     = (int16_t)(sinf(angle) * AUDIO_AMPLITUDE);
@@ -309,12 +336,12 @@ static void audio_init(void) {
         audio_buf[1][i].right = AUDIO_CENTER;
     }
 
-    gpio_set_function(PIN_AUDIO_L, GPIO_FUNC_PWM);
-    gpio_set_function(PIN_AUDIO_R, GPIO_FUNC_PWM);
-    pwm_set_wrap(AUDIO_PWM_SLICE, AUDIO_PWM_WRAP - 1);
-    pwm_set_chan_level(AUDIO_PWM_SLICE, PWM_CHAN_A, AUDIO_CENTER);
-    pwm_set_chan_level(AUDIO_PWM_SLICE, PWM_CHAN_B, AUDIO_CENTER);
-    pwm_set_enabled(AUDIO_PWM_SLICE, true);
+    gpio_set_function(pin_audio_l, GPIO_FUNC_PWM);
+    gpio_set_function(pin_audio_l + 1, GPIO_FUNC_PWM);
+    pwm_set_wrap(audio_pwm_slice, AUDIO_PWM_WRAP - 1);
+    pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_A, AUDIO_CENTER);
+    pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_B, AUDIO_CENTER);
+    pwm_set_enabled(audio_pwm_slice, true);
 }
 
 // =========================================================================
@@ -633,8 +660,8 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
 
     // Audio: output sample from play buffer
     audio_sample_t *as = &audio_buf[audio_play_buf][audio_play_idx];
-    pwm_set_chan_level(AUDIO_PWM_SLICE, PWM_CHAN_A, as->left);
-    pwm_set_chan_level(AUDIO_PWM_SLICE, PWM_CHAN_B, as->right);
+    pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_A, as->left);
+    pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_B, as->right);
     audio_play_idx++;
 
     // Audio: calculate one sample per scanline (spread across all 806 lines).
@@ -895,6 +922,7 @@ static bool lfs_read_file(const char *path, void *data, lfs_size_t size) {
 // the removable media (A:) or copied by the user onto the built-in media (C:).
 
 static void lfs_init_filesystem(void) {
+    set_sd_ss_pin(pin_sd_ss);
     lfs_cfg = pico_lfs_init(JAPI_LFS_OFFSET, JAPI_LFS_SIZE);
     if (!lfs_cfg) return;
 
@@ -1092,16 +1120,16 @@ void japi_init(void) {
         c_h = vga_hsync_pixels_program_get_default_config(offset_h);
     }
     uint sm_h = 0;
-    sm_config_set_sideset_pins(&c_h, PIN_HSYNC);
-    sm_config_set_out_pins(&c_h, PIN_RGB_BASE, 6);
+    sm_config_set_sideset_pins(&c_h, pin_hsync);
+    sm_config_set_out_pins(&c_h, pin_rgb_base, 6);
     sm_config_set_fifo_join(&c_h, PIO_FIFO_JOIN_TX);
     sm_config_set_clkdiv(&c_h, 1.0f);
     sm_config_set_out_shift(&c_h, true, true, 32);
 
-    pio_gpio_init(pio, PIN_HSYNC);
-    for (int i = 0; i < 6; i++) pio_gpio_init(pio, PIN_RGB_BASE + i);
-    pio_sm_set_consecutive_pindirs(pio, sm_h, PIN_HSYNC,    1, true);
-    pio_sm_set_consecutive_pindirs(pio, sm_h, PIN_RGB_BASE, 6, true);
+    pio_gpio_init(pio, pin_hsync);
+    for (int i = 0; i < 6; i++) pio_gpio_init(pio, pin_rgb_base + i);
+    pio_sm_set_consecutive_pindirs(pio, sm_h, pin_hsync,    1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm_h, pin_rgb_base, 6, true);
     pio_sm_init(pio, sm_h, offset_h, &c_h);
     pio_sm_put_blocking(pio, sm_h, PIXEL_COUNT);
     pio_sm_exec(pio, sm_h, pio_encode_pull(false, false));
@@ -1111,11 +1139,11 @@ void japi_init(void) {
     uint offset_v = pio_add_program(pio, &vga_vsync_program);
     uint sm_v = 1;
     pio_sm_config c_v = vga_vsync_program_get_default_config(offset_v);
-    sm_config_set_sideset_pins(&c_v, PIN_VSYNC);
+    sm_config_set_sideset_pins(&c_v, pin_vsync);
     sm_config_set_clkdiv(&c_v, 1.0f);
 
-    pio_gpio_init(pio, PIN_VSYNC);
-    pio_sm_set_consecutive_pindirs(pio, sm_v, PIN_VSYNC, 1, true);
+    pio_gpio_init(pio, pin_vsync);
+    pio_sm_set_consecutive_pindirs(pio, sm_v, pin_vsync, 1, true);
     pio_sm_init(pio, sm_v, offset_v, &c_v);
     pio_sm_put_blocking(pio, sm_v, LINE_COUNT);
     pio_sm_exec(pio, sm_v, pio_encode_pull(false, false));
@@ -1124,11 +1152,17 @@ void japi_init(void) {
     // --- PS/2 Keyboard SM (SM2) ---
     uint offset_ps2 = pio_add_program(pio, &ps2_keyboard_program);
     pio_sm_config c_ps2 = ps2_keyboard_program_get_default_config(offset_ps2);
-    pio_gpio_init(pio, 15);
-    gpio_pull_up(15);
-    sm_config_set_in_pins(&c_ps2, 15);
-    pio_gpio_init(pio, 14);
-    gpio_pull_up(14);
+    pio_gpio_init(pio, pin_keyb_data);
+    gpio_pull_up(pin_keyb_data);
+    sm_config_set_in_pins(&c_ps2, pin_keyb_data);
+    pio_gpio_init(pio, pin_keyb_clk);
+    gpio_pull_up(pin_keyb_clk);
+
+    // Configure a JMPPIN, so we can use the `wait jmppin` PIO instruction
+    // instead of `wait gpio`, which means we don't need to alter the PIO
+    // code if we configure pin_keyb_clk (using picotool).
+    sm_config_set_jmp_pin(&c_ps2, pin_keyb_clk);
+
     // The SM samples the data line on the PS/2 clock's falling edge (wait
     // instructions on GP14), so the clock rate is set by the PS/2 device, not
     // by this divider. Running the SM at full clk_sys (260 MHz) makes it so
