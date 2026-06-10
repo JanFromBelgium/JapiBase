@@ -3,7 +3,19 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "third_party_libs.h"
+
+// This header is shared by the Pico firmware and the host simulator. The
+// firmware pulls in the full vendored library bundle (FatFs + littlefs + the SD
+// SPI driver, which depends on the Pico SDK's hardware/* headers). The host sim
+// only needs the FatFs type definitions that japi_file_t / japi_dir_t are built
+// on, which the sim shim provides as a lightweight ff.h. Define JAPI_SIM on the
+// host build to take the shim path and keep the SDK out of the picture.
+#ifdef JAPI_SIM
+#  include "ff.h"
+#  include "lfs.h"
+#else
+#  include "third_party_libs.h"
+#endif
 
 // =========================================================================
 // SD CARD / SPI PIN CONFIGURATION (Japi Base hardware choices)
