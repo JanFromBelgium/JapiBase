@@ -8,6 +8,7 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "hardware/clocks.h"
+#include "hardware/sync.h"   // __dmb() for safe cross-core bitmap publication
 #include "hardware/vreg.h"
 #include "hardware/watchdog.h"
 #include "hardware/structs/bus_ctrl.h"
@@ -351,7 +352,10 @@ static void audio_init(void) {
 
 // JAPI_BITMAP_MAX_RAM comes from japi_base.h (shared with the host simulator).
 
-static uint8_t *bitmap_buf  = NULL; // the buffer the scanline render reads (front)
+// Volatile: Core 1's scanline render gates on this. It is published last (after
+// all geometry fields) with a __dmb() so the render never sees a buffer with
+// stale size/offset fields. The render snapshots it once per line.
+static uint8_t * volatile bitmap_buf = NULL; // the buffer the scanline render reads (front)
 static uint8_t *bitmap_work = NULL; // back buffer the program draws into (double-buffer only)
 static bool bitmap_double   = false;// true => draw into bitmap_work, swap on vga_update()
 static int bitmap_px_x   = 0;   // screen pixel offset (x) of top-left
@@ -390,7 +394,8 @@ static void __not_in_flash_func(vga_render_line)(uint8_t *dest, int line_idx) {
     int bm_start = VGA_COLS;   // first text col covered by bitmap (= no bitmap)
     int bm_end   = VGA_COLS;   // first text col after bitmap
     int bm_sy    = 0;
-    if (bitmap_buf) {
+    uint8_t *bmp = bitmap_buf; // snapshot the gate once; geometry is valid if non-NULL
+    if (bmp) {
         int sy = line_idx - bitmap_px_y;
         if (sy >= 0 && sy < bitmap_px_h) {
             bm_start = bitmap_px_x / FONT_W;
@@ -418,10 +423,10 @@ static void __not_in_flash_func(vga_render_line)(uint8_t *dest, int line_idx) {
     if (bm_start < VGA_COLS) {
         if (bitmap_scale == 1) {
             memcpy(dest + bitmap_px_x,
-                   bitmap_buf + bm_sy * bitmap_log_w,
+                   bmp + bm_sy * bitmap_log_w,
                    bitmap_log_w);
         } else {
-            const uint32_t *src32 = (const uint32_t *)(bitmap_buf + (bm_sy >> 1) * bitmap_log_w);
+            const uint32_t *src32 = (const uint32_t *)(bmp + (bm_sy >> 1) * bitmap_log_w);
             uint32_t *dst32 = (uint32_t *)(dest + bitmap_px_x);
             int n4 = bitmap_log_w >> 2;
             for (int i = 0; i < n4; i++) {
@@ -787,16 +792,22 @@ bool japi_bitmap_open(int col, int row, int w_chars, int h_chars, int scale,
     bitmap_scale  = scale;
     bitmap_double = double_buffered;
     bitmap_work   = work;
-    bitmap_buf    = buf;
+    __dmb();                 // publish all geometry before the render can see buf
+    bitmap_buf    = buf;     // the render gate: set last
     return true;
 }
 
 void japi_bitmap_close(void) {
     uint8_t *buf  = bitmap_buf;
     uint8_t *work = bitmap_work;
-    bitmap_buf    = NULL;
+    bitmap_buf    = NULL;     // close the render gate first
+    __dmb();                  // ensure Core 1 sees NULL before we free / reset
     bitmap_work   = NULL;
     bitmap_double = false;
+    // Clear the geometry so a later open never leaves the render reading a
+    // fresh buffer with leftover (larger) size fields between the two writes.
+    bitmap_px_x = bitmap_px_y = bitmap_px_w = bitmap_px_h = 0;
+    bitmap_log_w = bitmap_log_h = 0;
     free(buf);
     free(work);
 }
