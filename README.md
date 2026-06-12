@@ -307,11 +307,14 @@ Japi Base uses a Linux-style even/odd version scheme, so the version number
 alone tells you whether a release is stable or experimental:
 
 - **Even major versions are production releases** — stable and ready to build
-  on (2.0, 2.2, 4.0 …). Bugfix-only updates increment the minor number
-  (2.0 → 2.1 → 2.2).
-- **Odd major versions are development releases** — work in progress on new
-  platform features (3.0, 3.1 …). When that work is finished and stable it
-  graduates to the next even production version.
+  on (2.0, 2.2, 4.0 …). The minor number increments for stable, non-fundamental
+  updates: bug fixes and features that do not change the platform's
+  architecture (2.0 → 2.1 → 2.2). For example, adding a screenshot key is a
+  minor bump; the machine is the same machine, just a little more capable.
+- **Odd major versions are development releases** — work in progress on a
+  *fundamental* new direction that is not yet production-stable, such as native
+  USB, HDMI output, or a higher screen resolution (3.0, 3.1 …). When that work
+  is finished and stable it graduates to the next even production version.
 
 This scheme covers **Japi Base the platform only** — the I/O engine in this
 repository. Japi Base is meant to be built on: you can write your own program
