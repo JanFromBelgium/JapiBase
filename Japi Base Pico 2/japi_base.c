@@ -1551,7 +1551,8 @@ static void japi_capture_screenshot(void) {
     shot_put_u32(hdr + 34, image_size);
     shot_put_u32(hdr + 46, 256);           // colours used
     shot_put_u32(hdr + 50, 256);           // colours important
-    japi_fwrite(&f, hdr, sizeof hdr);
+    int ok = 1;
+    ok &= japi_fwrite(&f, hdr, sizeof hdr) == (int)sizeof hdr;
 
     // Palette: index -> RGB of the low 6 bits (RRGGBB), exactly the bits the DAC
     // wires up. Each 2-bit channel (0..3) scales by 85 to 0..255. Stored BGRA.
@@ -1562,17 +1563,20 @@ static void japi_capture_screenshot(void) {
         shot_pal[i * 4 + 2] = (uint8_t)(((c >> 4)  & 3) * 85);  // R
         shot_pal[i * 4 + 3] = 0;
     }
-    japi_fwrite(&f, shot_pal, (int)sizeof shot_pal);
+    ok &= japi_fwrite(&f, shot_pal, (int)sizeof shot_pal) == (int)sizeof shot_pal;
 
     // Pixel data, bottom-up: rebuild every scanline with the engine's own
     // compositor (text + bitmap overlay) and stream it straight to the card.
     for (int y = (int)H - 1; y >= 0; y--) {
         vga_render_line(shot_row, y);
-        japi_fwrite(&f, shot_row, (int)W);
+        ok &= japi_fwrite(&f, shot_row, (int)W) == (int)W;
     }
 
     japi_fclose(&f);
 
-    // Saved -> advance the persistent counter (monotonic, never reused).
-    lfs_write_file("screenshot.num", &num, sizeof num);
+    // Advance the persistent counter only on a fully successful save -- so a
+    // full or failing card leaves no gap in the numbering -- and drop the
+    // half-written file otherwise rather than leaving a corrupt screenshot.
+    if (ok) lfs_write_file("screenshot.num", &num, sizeof num);
+    else    japi_remove(path);
 }
