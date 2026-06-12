@@ -1360,11 +1360,24 @@ static const char *sd_volpath(const char *p) {
     return buf;
 }
 
+// Make sure the SD card is mounted, mounting it now if it isn't. Called on every
+// A: access, so a card inserted AFTER boot is picked up on the next use instead
+// of needing a restart. sd_init_driver() is idempotent (it sets up the SPI once
+// and then returns early), and f_mount(..., 1) re-probes the card each call, so
+// a now-present card mounts. (Card *removal* is not auto-detected -- A: accesses
+// simply fail until a card is back.)
+static bool ensure_sd_mounted(void) {
+    if (sd_mounted) return true;
+    if (sd_init_driver() && f_mount(&fs, "0:", 1) == FR_OK)
+        sd_mounted = true;
+    return sd_mounted;
+}
+
 bool japi_fopen(japi_file_t *f, const char *path, uint8_t mode) {
     const char *p = path;
     f->type = japi_parse_drive(&p);
 
-    if (f->type == FS_SD && sd_mounted) {
+    if (f->type == FS_SD && ensure_sd_mounted()) {
         BYTE fa = 0;
         if (mode & JAPI_READ)    fa |= FA_READ;
         if (mode & JAPI_WRITE)   fa |= FA_WRITE | FA_CREATE_ALWAYS;
@@ -1419,7 +1432,7 @@ void japi_fclose(japi_file_t *f) {
 bool japi_remove(const char *path) {
     const char *p = path;
     uint8_t drv = japi_parse_drive(&p);
-    if (drv == FS_SD && sd_mounted) {
+    if (drv == FS_SD && ensure_sd_mounted()) {
         return f_unlink(sd_volpath(p)) == FR_OK;
     }
     if (drv == FS_LFS && lfs_mounted)
@@ -1430,7 +1443,7 @@ bool japi_remove(const char *path) {
 bool japi_mkdir(const char *path) {
     const char *p = path;
     uint8_t drv = japi_parse_drive(&p);
-    if (drv == FS_SD && sd_mounted) {
+    if (drv == FS_SD && ensure_sd_mounted()) {
         return f_mkdir(sd_volpath(p)) == FR_OK;
     }
     if (drv == FS_LFS && lfs_mounted)
@@ -1441,7 +1454,7 @@ bool japi_mkdir(const char *path) {
 bool japi_exists(const char *path) {
     const char *p = path;
     uint8_t drv = japi_parse_drive(&p);
-    if (drv == FS_SD && sd_mounted) {
+    if (drv == FS_SD && ensure_sd_mounted()) {
         FILINFO fno;
         return f_stat(sd_volpath(p), &fno) == FR_OK;
     }
@@ -1463,7 +1476,7 @@ int japi_fsize(japi_file_t *f) {
 bool japi_opendir(japi_dir_t *d, const char *path) {
     const char *p = path;
     d->type = japi_parse_drive(&p);
-    if (d->type == FS_SD && sd_mounted) {
+    if (d->type == FS_SD && ensure_sd_mounted()) {
         return f_opendir(&d->fat, sd_volpath(p)) == FR_OK;
     }
     if (d->type == FS_LFS && lfs_mounted) {
@@ -1532,7 +1545,7 @@ static inline void shot_put_u32(uint8_t *p, uint32_t v) {
 }
 
 static void japi_capture_screenshot(void) {
-    if (!sd_mounted) return;                 // the image goes to the SD; nothing to do without one
+    if (!ensure_sd_mounted()) return;        // image goes to the SD; mount it (maybe just inserted)
 
     // Next number = current + 1; persisted only after a successful save below.
     uint32_t cur = 0;
@@ -1542,7 +1555,11 @@ static void japi_capture_screenshot(void) {
     char path[40];
     snprintf(path, sizeof path, "A:screenshot%04u.bmp", (unsigned)num);
 
-    japi_file_t f;
+    /* static: a japi_file_t embeds a FatFs FIL (~550 bytes, it carries a
+       512-byte sector buffer), and the Core 0 stack is only ~2 KB. This runs
+       single-threaded from vga_update() and never nests, so static storage is
+       safe and keeps that big object off the stack. */
+    static japi_file_t f;
     if (!japi_fopen(&f, path, JAPI_WRITE)) return;       // counter not advanced -> no gap
 
     const uint32_t W = VGA_WIDTH, H = VGA_HEIGHT;        // 1024 x 768; W % 4 == 0 -> no row padding
