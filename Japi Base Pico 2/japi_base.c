@@ -144,6 +144,12 @@ static bool ps2_scroll_lock = false;
 #define ps2_shift_any  (ps2_shift_l || ps2_shift_r)
 #define ps2_ctrl_any   (ps2_ctrl_l  || ps2_ctrl_r)
 
+/* PrintScreen is a global screenshot hotkey. The Core 1 keyboard ISR raises
+   this request (it must not do slow SD I/O), and Core 0 services it in
+   vga_update() -- see the screenshot section at the end of this file. */
+static volatile bool screenshot_request = false;
+static void japi_capture_screenshot(void);
+
 bool japi_has_char(void) {
     return kbd_head != kbd_tail;
 }
@@ -565,12 +571,20 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
                 case 0x71: result = JAPI_KEY_DELETE;   break;
                 case 0x4A: result = JAPI_KEY_NUM_DIV;  break;
                 case 0x5A: result = JAPI_KEY_NUM_ENTER; break;
-                case 0x7C: result = JAPI_KEY_PRTSCR;   break;
+                case 0x7C:
+                    /* PrintScreen: GLOBAL screenshot hotkey. Raise the request
+                       and deliver no key, so it works everywhere -- in the
+                       editor and while a BASIC program runs. The capture runs
+                       on Core 0 in vga_update(); here (Core 1 ISR) we only flag
+                       it. result stays 0, so nothing is pushed to the buffer. */
+                    screenshot_request = true;
+                    break;
             }
             ps2_extended = false;
             // Editor selection: emit modifier variants for the navigation
-            // codes only (0x0101..0x010A). Numpad/PrtScr from this switch
-            // are out of range and pass through unchanged.
+            // codes only (0x0101..0x010A). Numpad from this switch is out of
+            // range and passes through unchanged; PrtScr was intercepted above
+            // as a screenshot (result == 0).
             if (result >= JAPI_KEY_UP && result <= JAPI_KEY_DELETE) {
                 if (ps2_ctrl_any && ps2_shift_any) result += 0x80;
                 else if (ps2_shift_any)            result += 0x60;
@@ -751,6 +765,15 @@ void vga_update(void) {
        the scanline render reads is safe -- and far cheaper than a copy. */
     if (bitmap_double) {
         uint8_t *t = bitmap_buf; bitmap_buf = bitmap_work; bitmap_work = t;
+    }
+
+    /* Global screenshot (PrintScreen). The just-presented frame is now in
+       vga_text_active and the bitmap is swapped, so this captures exactly
+       what is on the monitor. Done here on Core 0 -- the SD write must never
+       happen in the Core 1 keyboard ISR that raised the request. */
+    if (screenshot_request) {
+        screenshot_request = false;
+        japi_capture_screenshot();
     }
 }
 
@@ -1468,4 +1491,88 @@ void japi_closedir(japi_dir_t *d) {
     if (d->type == FS_SD)  f_closedir(&d->fat);
     if (d->type == FS_LFS) lfs_dir_close(&lfs, &d->lfs);
     d->type = FS_NONE;
+}
+
+// =========================================================================
+// SCREENSHOT  (PrintScreen -> 8-bit indexed BMP on the SD card)
+// =========================================================================
+// A faithful capture of exactly what is on the monitor: we re-run the engine's
+// own scanline compositor (vga_render_line) for every line and stream the
+// result to an 8-bit indexed BMP. The pixel bytes ARE the 6-bit palette values
+// the DAC uses, so the BMP's palette holds those same 64 colours and the pixel
+// data needs no per-pixel conversion. RAM cost is two static 1 KB buffers; no
+// full framebuffer -- the image is streamed straight to the card.
+//
+// Numbering is a persistent, monotonic counter on C: (LittleFS, the built-in
+// flash). It survives reboots and SD-card swaps and is never reused, so shots
+// sort chronologically like an old film camera. The image itself goes to A:
+// (the removable SD). The counter advances only after a successful save, so a
+// failed capture leaves no gap.
+
+static uint8_t shot_row[VGA_WIDTH];     // one scanline; static, never on the ~2 KB stack
+static uint8_t shot_pal[256 * 4];       // BMP palette (BGRA); static for the same reason
+
+static inline void shot_put_u16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static inline void shot_put_u32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+
+static void japi_capture_screenshot(void) {
+    if (!sd_mounted) return;                 // the image goes to the SD; nothing to do without one
+
+    // Next number = current + 1; persisted only after a successful save below.
+    uint32_t cur = 0;
+    lfs_read_file("screenshot.num", &cur, sizeof cur);   // leaves cur=0 if missing
+    uint32_t num = cur + 1;
+
+    char path[40];
+    snprintf(path, sizeof path, "A:screenshot%04u.bmp", (unsigned)num);
+
+    japi_file_t f;
+    if (!japi_fopen(&f, path, JAPI_WRITE)) return;       // counter not advanced -> no gap
+
+    const uint32_t W = VGA_WIDTH, H = VGA_HEIGHT;        // 1024 x 768; W % 4 == 0 -> no row padding
+    const uint32_t pixel_offset = 14 + 40 + 256 * 4;     // headers + 256-entry palette
+    const uint32_t image_size   = W * H;                 // 1 byte / pixel
+    const uint32_t file_size    = pixel_offset + image_size;
+
+    // BITMAPFILEHEADER (14) + BITMAPINFOHEADER (40)
+    uint8_t hdr[54];
+    memset(hdr, 0, sizeof hdr);
+    hdr[0] = 'B'; hdr[1] = 'M';
+    shot_put_u32(hdr + 2,  file_size);
+    shot_put_u32(hdr + 10, pixel_offset);
+    shot_put_u32(hdr + 14, 40);            // info header size
+    shot_put_u32(hdr + 18, W);
+    shot_put_u32(hdr + 22, H);             // positive height -> bottom-up rows
+    shot_put_u16(hdr + 26, 1);             // planes
+    shot_put_u16(hdr + 28, 8);             // bits per pixel (indexed)
+    shot_put_u32(hdr + 30, 0);             // BI_RGB (uncompressed)
+    shot_put_u32(hdr + 34, image_size);
+    shot_put_u32(hdr + 46, 256);           // colours used
+    shot_put_u32(hdr + 50, 256);           // colours important
+    japi_fwrite(&f, hdr, sizeof hdr);
+
+    // Palette: index -> RGB of the low 6 bits (RRGGBB), exactly the bits the DAC
+    // wires up. Each 2-bit channel (0..3) scales by 85 to 0..255. Stored BGRA.
+    for (int i = 0; i < 256; i++) {
+        int c = i & 0x3F;
+        shot_pal[i * 4 + 0] = (uint8_t)(( c        & 3) * 85);  // B
+        shot_pal[i * 4 + 1] = (uint8_t)(((c >> 2)  & 3) * 85);  // G
+        shot_pal[i * 4 + 2] = (uint8_t)(((c >> 4)  & 3) * 85);  // R
+        shot_pal[i * 4 + 3] = 0;
+    }
+    japi_fwrite(&f, shot_pal, (int)sizeof shot_pal);
+
+    // Pixel data, bottom-up: rebuild every scanline with the engine's own
+    // compositor (text + bitmap overlay) and stream it straight to the card.
+    for (int y = (int)H - 1; y >= 0; y--) {
+        vga_render_line(shot_row, y);
+        japi_fwrite(&f, shot_row, (int)W);
+    }
+
+    japi_fclose(&f);
+
+    // Saved -> advance the persistent counter (monotonic, never reused).
+    lfs_write_file("screenshot.num", &num, sizeof num);
 }
