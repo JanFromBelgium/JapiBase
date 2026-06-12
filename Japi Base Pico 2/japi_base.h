@@ -424,6 +424,11 @@ void japi_sound_off(void);
 //
 // Drive letters:  A: = SD card (removable media, available if inserted)
 //                 C: = LittleFS built-in media (360K flash, always available)
+//
+// Longest path the file API accepts, matching FatFs's long-file-name capacity
+// (FF_LFN_BUF). Internal path buffers are sized from this so a long path is
+// never silently truncated.
+#define JAPI_PATH_MAX  255
 
 typedef struct {
     uint8_t type;

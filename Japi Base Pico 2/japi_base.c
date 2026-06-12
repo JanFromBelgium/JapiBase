@@ -963,7 +963,16 @@ static void core1_engine_entry(void) {
 
 // FatFs requirements
 static FATFS __attribute__((section(".usb_ram"))) fs;
-uint32_t get_fattime(void) { return ((uint32_t)(2026-1980)<<25)|((uint32_t)5<<21)|((uint32_t)3<<16); }
+// FatFs timestamp for files on the SD. Japi Base has no real-time clock, so we
+// stamp the FAT epoch -- 1980-01-01 00:00:00 -- the canonical "date not set"
+// value. Using the epoch keeps EVERY timestamp field uniformly at the zero
+// point (the last-access date FatFs doesn't drive sits at the epoch too), so
+// nothing looks like a believable real date. FAT packs the date in the high 16
+// bits (year-1980 << 9 | month << 5 | day) and time in the low 16; the year
+// field is 0 for 1980 and month/day must be >= 1.
+uint32_t get_fattime(void) {
+    return ((uint32_t)1 << 21) | ((uint32_t)1 << 16);
+}
 void* ff_memalloc(UINT size) { return malloc(size); }
 void ff_memfree(void* m) { free(m); }
 
@@ -1035,7 +1044,11 @@ static bool parse_keyboard_mapping(const char *buf, char *out, int outsize) {
 // removable media (A:) wins over the built-in media (C:).
 static void lfs_load_keyboard(void) {
     char name[32];
-    uint8_t tmp[JAPI_KBD_SIZE];
+    /* static: a FatFs FIL is ~550 B (it holds a 512-byte sector buffer) and the
+       keymap copy is 768 B. Two FILs + tmp on the stack here would be ~2 KB,
+       right at the Core 0 stack limit. This runs once at init (single-threaded),
+       so static storage is safe and keeps it well off the stack. */
+    static uint8_t tmp[JAPI_KBD_SIZE];
 
     // 0. Built-in default — the world's most common layout.
     memcpy(japi_keymap, kbd_QWERTY_US, JAPI_KBD_SIZE);
@@ -1062,7 +1075,7 @@ static void lfs_load_keyboard(void) {
 
     // 2. Removable media (A: / SD): same scheme, and it overrides C:.
     if (sd_mounted) {
-        FIL cf;
+        static FIL cf;        /* static: keep the ~550-byte FatFs FIL off the stack */
         if (f_open(&cf, "0:/config.sys", FA_READ) == FR_OK) {
             char buf[128] = {0};
             UINT br = 0;
@@ -1071,7 +1084,7 @@ static void lfs_load_keyboard(void) {
                 if (parse_keyboard_mapping(buf, name, sizeof(name))) {
                     char fn[48];
                     snprintf(fn, sizeof(fn), "0:/%s.kbd", name);
-                    FIL kf;
+                    static FIL kf;   /* static: keep the ~550-byte FIL off the stack */
                     if (f_open(&kf, fn, FA_READ) == FR_OK) {
                         UINT rd = 0;
                         if (f_read(&kf, tmp, JAPI_KBD_SIZE, &rd) == FR_OK &&
@@ -1336,6 +1349,17 @@ static uint8_t japi_parse_drive(const char **path) {
     return FS_NONE;
 }
 
+// Build the FatFs volume path "0:<p>" for the SD card. Sized for the full
+// supported path (JAPI_PATH_MAX) so a long path is never silently truncated --
+// the old per-call char[68] buffers were too small. File ops run on Core 0
+// only and never nest, so one shared static buffer is safe and also keeps these
+// off the small (~2 KB) stack.
+static const char *sd_volpath(const char *p) {
+    static char buf[JAPI_PATH_MAX + 4];   // "0:" + path + NUL (+ slack)
+    snprintf(buf, sizeof buf, "0:%s", p);
+    return buf;
+}
+
 bool japi_fopen(japi_file_t *f, const char *path, uint8_t mode) {
     const char *p = path;
     f->type = japi_parse_drive(&p);
@@ -1345,9 +1369,7 @@ bool japi_fopen(japi_file_t *f, const char *path, uint8_t mode) {
         if (mode & JAPI_READ)    fa |= FA_READ;
         if (mode & JAPI_WRITE)   fa |= FA_WRITE | FA_CREATE_ALWAYS;
         if (mode & JAPI_APPEND)  fa |= FA_WRITE | FA_OPEN_APPEND;
-        char sdpath[68];
-        snprintf(sdpath, sizeof(sdpath), "0:%s", p);
-        return f_open(&f->fat, sdpath, fa) == FR_OK;
+        return f_open(&f->fat, sd_volpath(p), fa) == FR_OK;
     }
 
     if (f->type == FS_LFS && lfs_mounted) {
@@ -1398,9 +1420,7 @@ bool japi_remove(const char *path) {
     const char *p = path;
     uint8_t drv = japi_parse_drive(&p);
     if (drv == FS_SD && sd_mounted) {
-        char sdpath[68];
-        snprintf(sdpath, sizeof(sdpath), "0:%s", p);
-        return f_unlink(sdpath) == FR_OK;
+        return f_unlink(sd_volpath(p)) == FR_OK;
     }
     if (drv == FS_LFS && lfs_mounted)
         return lfs_remove(&lfs, p) == LFS_ERR_OK;
@@ -1411,9 +1431,7 @@ bool japi_mkdir(const char *path) {
     const char *p = path;
     uint8_t drv = japi_parse_drive(&p);
     if (drv == FS_SD && sd_mounted) {
-        char sdpath[68];
-        snprintf(sdpath, sizeof(sdpath), "0:%s", p);
-        return f_mkdir(sdpath) == FR_OK;
+        return f_mkdir(sd_volpath(p)) == FR_OK;
     }
     if (drv == FS_LFS && lfs_mounted)
         return lfs_mkdir(&lfs, p) == LFS_ERR_OK;
@@ -1425,9 +1443,7 @@ bool japi_exists(const char *path) {
     uint8_t drv = japi_parse_drive(&p);
     if (drv == FS_SD && sd_mounted) {
         FILINFO fno;
-        char sdpath[68];
-        snprintf(sdpath, sizeof(sdpath), "0:%s", p);
-        return f_stat(sdpath, &fno) == FR_OK;
+        return f_stat(sd_volpath(p), &fno) == FR_OK;
     }
     if (drv == FS_LFS && lfs_mounted) {
         struct lfs_info info;
@@ -1448,9 +1464,7 @@ bool japi_opendir(japi_dir_t *d, const char *path) {
     const char *p = path;
     d->type = japi_parse_drive(&p);
     if (d->type == FS_SD && sd_mounted) {
-        char sdpath[68];
-        snprintf(sdpath, sizeof(sdpath), "0:%s", p);
-        return f_opendir(&d->fat, sdpath) == FR_OK;
+        return f_opendir(&d->fat, sd_volpath(p)) == FR_OK;
     }
     if (d->type == FS_LFS && lfs_mounted) {
         if (lfs_dir_open(&lfs, &d->lfs, *p ? p : "/") == LFS_ERR_OK) return true;
