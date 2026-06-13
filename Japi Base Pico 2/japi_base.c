@@ -1005,6 +1005,76 @@ static bool lfs_read_file(const char *path, void *data, lfs_size_t size) {
 // needs no files at all; any other layout is supplied as a <name>.kbd file on
 // the removable media (A:) or copied by the user onto the built-in media (C:).
 
+#ifdef JAPI_MIGRATE_CONFIG
+// One-shot migration, compiled ONLY into the "migrate" UF2. All built-in config
+// and state moved from the loose C: root (and the old C:syntax/ folder) into a
+// single C:config/ folder. This relocates a user's existing files there once,
+// using lfs_rename (a cheap in-place metadata move -- no data copy). It is
+// idempotent: renaming an absent source simply fails and is ignored. After
+// booting this UF2 once, flash the clean (non-migrate) firmware.
+static void lfs_migrate_to_config(void) {
+    if (!lfs_mounted) return;
+
+    char dst[80];
+
+    // Known single config/state files in the root.
+    static const char *named[] = { "config.sys", "cpuclock.cfg", "screenshot.num", 0 };
+    for (int i = 0; named[i]; i++) {
+        snprintf(dst, sizeof dst, "config/%s", named[i]);
+        lfs_rename(&lfs, named[i], dst);
+    }
+
+    // static: keep the big lfs_info (~264 B) and the name table off the ~2 KB
+    // Core 0 stack. Single-threaded boot context, so reuse across both walks.
+    static struct lfs_info info;
+    static lfs_dir_t       dir;
+    static char            names[8][48];
+    int n;
+
+    // Every *.kbd in the root. Collect names first -- renaming during the walk
+    // would disturb the directory iterator -- then move them.
+    n = 0;
+    if (lfs_dir_open(&lfs, &dir, "/") >= 0) {
+        while (n < 8 && lfs_dir_read(&lfs, &dir, &info) > 0) {
+            if (info.type != LFS_TYPE_REG) continue;
+            int L = (int)strlen(info.name);
+            if (L > 4 && L < (int)sizeof names[0] && info.name[L-4] == '.' &&
+                (info.name[L-3]|32) == 'k' && (info.name[L-2]|32) == 'b' &&
+                (info.name[L-1]|32) == 'd') {
+                strncpy(names[n], info.name, sizeof names[0] - 1);
+                names[n][sizeof names[0] - 1] = 0;
+                n++;
+            }
+        }
+        lfs_dir_close(&lfs, &dir);
+    }
+    for (int i = 0; i < n; i++) {
+        snprintf(dst, sizeof dst, "config/%s", names[i]);
+        lfs_rename(&lfs, names[i], dst);
+    }
+
+    // Old C:syntax/* -> C:config/syntax/*, then drop the now-empty syntax/ dir.
+    n = 0;
+    if (lfs_dir_open(&lfs, &dir, "syntax") >= 0) {
+        while (n < 8 && lfs_dir_read(&lfs, &dir, &info) > 0) {
+            if (info.type != LFS_TYPE_REG) continue;
+            if ((int)strlen(info.name) >= (int)sizeof names[0]) continue;
+            strncpy(names[n], info.name, sizeof names[0] - 1);
+            names[n][sizeof names[0] - 1] = 0;
+            n++;
+        }
+        lfs_dir_close(&lfs, &dir);
+    }
+    char src[80];
+    for (int i = 0; i < n; i++) {
+        snprintf(src, sizeof src, "syntax/%s",        names[i]);
+        snprintf(dst, sizeof dst, "config/syntax/%s", names[i]);
+        lfs_rename(&lfs, src, dst);
+    }
+    lfs_remove(&lfs, "syntax");   // empty now -> removed (ignored otherwise)
+}
+#endif // JAPI_MIGRATE_CONFIG
+
 static void lfs_init_filesystem(void) {
     set_sd_ss_pin(pin_sd_ss);
     lfs_cfg = pico_lfs_init(JAPI_LFS_OFFSET, JAPI_LFS_SIZE);
@@ -1021,6 +1091,19 @@ static void lfs_init_filesystem(void) {
         if (lfs_mount(&lfs, lfs_cfg) != LFS_ERR_OK) return;
     }
     lfs_mounted = true;
+
+    // All built-in config + state lives under C:config/ (keeps the C: root
+    // clean and consistent with the editor's C:config/syntax/ schemes). Create
+    // it up-front so the keyboard / clock / screenshot writers can rely on it.
+    // mkdir is idempotent here: an existing folder just returns LFS_ERR_EXIST.
+    lfs_mkdir(&lfs, "config");
+    lfs_mkdir(&lfs, "config/syntax");
+
+#ifdef JAPI_MIGRATE_CONFIG
+    // Migrate-UF2 only: relocate any legacy loose files into C:config/ once,
+    // before the clock target and keyboard mapping are read from there below.
+    lfs_migrate_to_config();
+#endif
 }
 
 // Parse a 'KEYBOARD MAPPING = <name>' line into out[]. True if a name was found.
@@ -1058,14 +1141,14 @@ static void lfs_load_keyboard(void) {
     if (lfs_mounted) {
         char buf[128] = {0};
         lfs_file_t f;
-        if (lfs_file_open(&lfs, &f, "config.sys", LFS_O_RDONLY) == LFS_ERR_OK) {
+        if (lfs_file_open(&lfs, &f, "config/config.sys", LFS_O_RDONLY) == LFS_ERR_OK) {
             lfs_ssize_t br = lfs_file_read(&lfs, &f, buf, sizeof(buf) - 1);
             lfs_file_close(&lfs, &f);
             if (br > 0) {
                 buf[br] = '\0';
                 if (parse_keyboard_mapping(buf, name, sizeof(name))) {
-                    char fn[40];
-                    snprintf(fn, sizeof(fn), "%s.kbd", name);
+                    char fn[48];
+                    snprintf(fn, sizeof(fn), "config/%s.kbd", name);
                     if (lfs_read_file(fn, tmp, JAPI_KBD_SIZE))
                         memcpy(japi_keymap, tmp, JAPI_KBD_SIZE);
                 }
@@ -1105,7 +1188,7 @@ static void lfs_load_keyboard(void) {
 
 static int japi_read_clock_target(void) {
     char buf[8] = {0};
-    if (lfs_mounted && lfs_read_file("cpuclock.cfg", buf, 3)) {
+    if (lfs_mounted && lfs_read_file("config/cpuclock.cfg", buf, 3)) {
         if (buf[0] == '3' && buf[1] == '9' && buf[2] == '0') return 390;
         if (buf[0] == '3' && buf[1] == '2' && buf[2] == '4') return 324;
         if (buf[0] == '2' && buf[1] == '6' && buf[2] == '0') return 260;
@@ -1116,7 +1199,7 @@ static int japi_read_clock_target(void) {
 static void japi_write_clock_target(int mhz) {
     if (!lfs_mounted) return;
     const char *s = (mhz == 390) ? "390" : (mhz == 324) ? "324" : "260";
-    lfs_write_file("cpuclock.cfg", s, 3);
+    lfs_write_file("config/cpuclock.cfg", s, 3);
 }
 
 int  japi_get_cpu_clock_mhz(void)   { return japi_active_clock_mhz; }
@@ -1549,7 +1632,7 @@ static void japi_capture_screenshot(void) {
 
     // Next number = current + 1; persisted only after a successful save below.
     uint32_t cur = 0;
-    lfs_read_file("screenshot.num", &cur, sizeof cur);   // leaves cur=0 if missing
+    lfs_read_file("config/screenshot.num", &cur, sizeof cur);   // leaves cur=0 if missing
     uint32_t num = cur + 1;
 
     char path[40];
@@ -1608,6 +1691,6 @@ static void japi_capture_screenshot(void) {
     // Advance the persistent counter only on a fully successful save -- so a
     // full or failing card leaves no gap in the numbering -- and drop the
     // half-written file otherwise rather than leaving a corrupt screenshot.
-    if (ok) lfs_write_file("screenshot.num", &num, sizeof num);
+    if (ok) lfs_write_file("config/screenshot.num", &num, sizeof num);
     else    japi_remove(path);
 }
