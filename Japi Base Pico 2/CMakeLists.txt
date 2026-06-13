@@ -39,8 +39,7 @@ target_include_directories(japi_base PRIVATE
 )
 
 target_compile_definitions(japi_base PRIVATE
-    LFS_THREADSAFE=1
-    LFS_NO_DEBUG=1
+    LFS_NO_DEBUG=1             # littlefs is used only from Core 0 -> no LFS_THREADSAFE
 )
 
 pico_add_extra_outputs(japi_base)

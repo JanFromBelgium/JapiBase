@@ -8,7 +8,8 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "hardware/clocks.h"
-#include "hardware/sync.h"   // __dmb() for safe cross-core bitmap publication
+#include "hardware/sync.h"   // __dmb() + save_and_disable_interrupts for flash writes
+#include "hardware/flash.h"  // flash_range_program/erase for our littlefs block device
 #include "hardware/vreg.h"
 #include "hardware/watchdog.h"
 #include "hardware/structs/bus_ctrl.h"
@@ -1075,14 +1076,83 @@ static void lfs_migrate_to_config(void) {
 }
 #endif // JAPI_MIGRATE_CONFIG
 
+// ===========================================================================
+// littlefs block device for the RP2350 internal flash -- Japi Base's own glue.
+//
+// littlefs itself is BSD-3-Clause; this thin layer is all that ties it to the
+// flash, so the firmware carries no GPL-only code. It just maps littlefs's four
+// block-device callbacks onto the Pico SDK's hardware_flash API for our reserved
+// region. Geometry matches what the previous adapter used (block = sector =
+// 4 KiB, prog = page = 256 B), so a filesystem written before this change stays
+// readable. Only Core 0 touches littlefs, so no locking is needed; flash program
+// and erase run with interrupts disabled (as before).
+// ===========================================================================
+static uint32_t japi_lfs_base;                 // byte offset of our region in flash
+
+static int japi_bd_read(const struct lfs_config *c, lfs_block_t block,
+                        lfs_off_t off, void *buffer, lfs_size_t size) {
+    // Read through the uncached XIP window so a read right after a program or
+    // erase never returns stale cached bytes.
+    const uint8_t *src = (const uint8_t *)(XIP_NOCACHE_NOALLOC_BASE
+                         + japi_lfs_base + (uint32_t)block * c->block_size + off);
+    memcpy(buffer, src, size);
+    return LFS_ERR_OK;
+}
+
+static int japi_bd_prog(const struct lfs_config *c, lfs_block_t block,
+                        lfs_off_t off, const void *buffer, lfs_size_t size) {
+    uint32_t addr = japi_lfs_base + (uint32_t)block * c->block_size + off;
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_program(addr, (const uint8_t *)buffer, size);
+    restore_interrupts(ints);
+    return LFS_ERR_OK;
+}
+
+static int japi_bd_erase(const struct lfs_config *c, lfs_block_t block) {
+    uint32_t addr = japi_lfs_base + (uint32_t)block * c->block_size;
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(addr, c->block_size);
+    restore_interrupts(ints);
+    return LFS_ERR_OK;
+}
+
+static int japi_bd_sync(const struct lfs_config *c) { (void)c; return LFS_ERR_OK; }
+
+// Static config + I/O buffers (no malloc). lfs needs read/prog buffers of
+// cache_size and a lookahead buffer of lookahead_size bytes.
+static struct lfs_config japi_lfs_config;
+static uint8_t japi_lfs_read_buf[FLASH_PAGE_SIZE * 4];
+static uint8_t japi_lfs_prog_buf[FLASH_PAGE_SIZE * 4];
+static uint8_t japi_lfs_look_buf[32];
+
+// Build the lfs_config for the flash region [offset, offset+size). Both must be
+// flash-sector aligned. Returns NULL on bad geometry.
+static struct lfs_config *japi_lfs_make_config(uint32_t offset, uint32_t size) {
+    if (!size || offset % FLASH_SECTOR_SIZE || size % FLASH_SECTOR_SIZE) return NULL;
+    japi_lfs_base = offset;
+    struct lfs_config *c = &japi_lfs_config;
+    memset(c, 0, sizeof *c);
+    c->read  = japi_bd_read;
+    c->prog  = japi_bd_prog;
+    c->erase = japi_bd_erase;
+    c->sync  = japi_bd_sync;
+    c->read_size       = 1;
+    c->prog_size       = FLASH_PAGE_SIZE;     // 256
+    c->block_size      = FLASH_SECTOR_SIZE;   // 4096
+    c->block_count     = size / FLASH_SECTOR_SIZE;
+    c->block_cycles    = 300;                 // wear-levelling threshold
+    c->cache_size      = FLASH_PAGE_SIZE * 4; // 1024
+    c->lookahead_size  = 32;
+    c->read_buffer     = japi_lfs_read_buf;
+    c->prog_buffer     = japi_lfs_prog_buf;
+    c->lookahead_buffer = japi_lfs_look_buf;
+    return c;
+}
+
 static void lfs_init_filesystem(void) {
     set_sd_ss_pin(pin_sd_ss);
-    lfs_cfg = pico_lfs_init(JAPI_LFS_OFFSET, JAPI_LFS_SIZE);
+    lfs_cfg = japi_lfs_make_config(JAPI_LFS_OFFSET, JAPI_LFS_SIZE);
     if (!lfs_cfg) return;
-
-    // Disable multicore lockout — Core 1 is not running yet
-    struct pico_lfs_context *ctx = (struct pico_lfs_context *)lfs_cfg->context;
-    ctx->multicore_lockout_enabled = false;
 
     if (lfs_mount(&lfs, lfs_cfg) != LFS_ERR_OK) {
         // Fresh flash (e.g. right after a UF2 upload): create an empty
