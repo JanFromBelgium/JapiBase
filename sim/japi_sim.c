@@ -434,6 +434,12 @@ bool japi_mkdir(const char *p) {
     return sim_map_path(p, path, sizeof path) && mkdir(path, 0777) == 0;
 }
 
+/* --- CPU clock (host stubs: there is no overclock or reboot on a PC) --- */
+int  japi_get_cpu_clock_mhz(void) { return 324; }      /* pretend the default tier */
+bool japi_set_cpu_clock(int mhz)  { (void)mhz; return false; }  /* no-op, no reboot */
+bool japi_clock_was_reverted(void){ return false; }
+int  japi_clock_reverted_from(void){ return 0; }
+
 bool japi_exists(const char *p) {
     char path[512]; struct stat st;
     return sim_map_path(p, path, sizeof path) && stat(path, &st) == 0;
