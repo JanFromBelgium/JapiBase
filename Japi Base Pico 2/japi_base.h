@@ -280,11 +280,13 @@ void vga_redefine_char(uint8_t code, const uint8_t new_bitmap[FONT_H]);
 //   is swapped to the screen on vga_update() (tear-free, smooth animation) at the
 //   cost of twice the bitmap RAM. Best for games.
 //
-// The logical buffer is (w_chars*8/scale) x (h_chars*12/scale) bytes and must be
-// <= JAPI_BITMAP_MAX_RAM (double buffering allocates two such buffers). The cap
-// (504x384 = 189 KB) is the largest char-aligned window: 126 cols (even, scale 2)
-// x 64 rows. A full-height/near-full-width graphics screen fits in one window.
-#define JAPI_BITMAP_MAX_RAM 193536
+// The logical buffer is (w_chars*8/scale) x (h_chars*12/scale) bytes (double
+// buffering allocates two such buffers). There is no fixed cap: the heap is the
+// real limit. japi_bitmap_open() allocates the buffer and returns false if it
+// does not fit, so the caller gets a clean failure rather than a refused size
+// that would actually have fit. A BASIC program can read the largest free block
+// with the FREE() function and size a bitmap to it. The 127x64 char grid bounds
+// a single buffer to at most 1016x768 = 780288 bytes.
 
 bool     japi_bitmap_open(int col, int row, int w_chars, int h_chars, int scale,
                           bool double_buffered);

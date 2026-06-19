@@ -357,7 +357,6 @@ static void audio_init(void) {
 // BITMAP OVERLAY STATE
 // =========================================================================
 
-// JAPI_BITMAP_MAX_RAM comes from japi_base.h (shared with the host simulator).
 
 // Volatile: Core 1's scanline render gates on this. It is published last (after
 // all geometry fields) with a __dmb() so the render never sees a buffer with
@@ -801,8 +800,13 @@ bool japi_bitmap_open(int col, int row, int w_chars, int h_chars, int scale,
         return false;
     int lw = pw / scale;
     int lh = ph / scale;
-    if ((uint32_t)lw * lh > JAPI_BITMAP_MAX_RAM) return false;
-    uint8_t *buf = malloc(lw * lh);
+    /* No fixed RAM cap: the heap is the real limit. malloc returns NULL when the
+     * buffer does not fit (PICO_MALLOC_PANIC=0), and we report that cleanly to the
+     * caller instead of refusing a size that would actually have fit. A program
+     * can read the largest free block with the BASIC FREE() function to size a
+     * bitmap up front. The 127x64 char grid bounds lw*lh to <= 780288, so the
+     * uint32 multiply cannot overflow. */
+    uint8_t *buf = malloc((size_t)lw * lh);
     if (!buf) return false;
     uint8_t *work = NULL;
     if (double_buffered) {

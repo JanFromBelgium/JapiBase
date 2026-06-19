@@ -171,8 +171,9 @@ bool japi_bitmap_open(int col, int row, int w_chars, int h_chars, int scale,
     if (col < 0 || row < 0 || col + w_chars > VGA_COLS || row + h_chars > VGA_ROWS)
         return false;
     int lw = pw / scale, lh = ph / scale;
-    if ((uint32_t)lw * lh > JAPI_BITMAP_MAX_RAM) return false;
-    uint8_t *buf = malloc(lw * lh);
+    /* No fixed RAM cap: the heap is the limit (matches japi_base.c). malloc gates
+     * the size; the 127x64 char grid bounds lw*lh to <= 780288. */
+    uint8_t *buf = malloc((size_t)lw * lh);
     if (!buf) return false;
     uint8_t *work = NULL;
     if (double_buffered) {
