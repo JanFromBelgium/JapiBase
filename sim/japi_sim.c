@@ -368,6 +368,14 @@ uint16_t japi_get_char(void) {
     return c;
 }
 
+/* KEYDOWN: a terminal delivers key PRESSES (characters) but no key-up events, so
+   the host sim cannot track a live held-state -- always reports "not held". Real
+   key-state needs the hardware (the PS/2 driver); test KEYDOWN on the Pico. */
+bool japi_keydown(uint16_t code) {
+    (void)code;
+    return false;
+}
+
 /* --- Sound: no-ops on host --- */
 void japi_play(uint8_t n,uint16_t d){(void)n;(void)d;}
 void japi_play_ch(int c,uint8_t n,uint16_t d){(void)c;(void)n;(void)d;}

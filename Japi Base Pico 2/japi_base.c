@@ -77,6 +77,14 @@ static vga_char_t vga_text_active[VGA_ROWS][VGA_COLS];
 
 uint8_t japi_keymap[768] = {0};
 
+// Live key-down state for japi_keydown / BASIC KEYDOWN, indexed by PS/2 scancode
+// (0..255) plus 256 for the E0-extended set (so e.g. the arrow keys do not collide
+// with the main block). The PS/2 handler sets a bit on every make code and clears
+// it on every break code, before any layout/shift translation, so the state is
+// physical-key based. Written on Core 1 (the keyboard ISR/poll), read on Core 0;
+// a stale-by-one-poll read is harmless for a held-state probe.
+static volatile uint8_t japi_held_sc[512] = {0};
+
 static int dma_chan_0;
 static int dma_chan_1;
 static volatile int scanline_counter = 0;
@@ -171,6 +179,49 @@ uint8_t japi_kbd_modifier_state(void) {
          | (ps2_altgr   ? JAPI_MOD_ALTGR   : 0)
          | (ps2_gui_l   ? JAPI_MOD_GUI_L   : 0)
          | (ps2_gui_r   ? JAPI_MOD_GUI_R   : 0);
+}
+
+bool japi_keydown(uint16_t code) {
+    // Modifiers: reuse the live modifier bitmask (left or right counts).
+    switch (code) {
+        case JAPI_KEY_MOD_SHIFT: return (japi_kbd_modifier_state() & (JAPI_MOD_SHIFT_L | JAPI_MOD_SHIFT_R)) != 0;
+        case JAPI_KEY_MOD_CTRL:  return (japi_kbd_modifier_state() & (JAPI_MOD_CTRL_L  | JAPI_MOD_CTRL_R )) != 0;
+        case JAPI_KEY_MOD_ALT:   return (japi_kbd_modifier_state() &  JAPI_MOD_ALT_L) != 0;
+        case JAPI_KEY_MOD_ALTGR: return (japi_kbd_modifier_state() &  JAPI_MOD_ALTGR) != 0;
+        default: break;
+    }
+    // Special keys -> their (scancode, E0-extended) origin (mirrors the PS/2
+    // translation switches). Esc/Enter/Tab included; Space falls to the scan below.
+    static const struct { uint16_t code; uint8_t sc; bool ext; } SPECIAL[] = {
+        { JAPI_KEY_UP, 0x75, true }, { JAPI_KEY_DOWN, 0x72, true },
+        { JAPI_KEY_LEFT, 0x6B, true }, { JAPI_KEY_RIGHT, 0x74, true },
+        { JAPI_KEY_HOME, 0x6C, true }, { JAPI_KEY_END, 0x69, true },
+        { JAPI_KEY_PGUP, 0x7D, true }, { JAPI_KEY_PGDN, 0x7A, true },
+        { JAPI_KEY_INSERT, 0x70, true }, { JAPI_KEY_DELETE, 0x71, true },
+        { JAPI_KEY_F1, 0x05, false }, { JAPI_KEY_F2, 0x06, false }, { JAPI_KEY_F3, 0x04, false },
+        { JAPI_KEY_F4, 0x0C, false }, { JAPI_KEY_F5, 0x03, false }, { JAPI_KEY_F6, 0x0B, false },
+        { JAPI_KEY_F7, 0x83, false }, { JAPI_KEY_F8, 0x0A, false }, { JAPI_KEY_F9, 0x01, false },
+        { JAPI_KEY_F10, 0x09, false }, { JAPI_KEY_F11, 0x78, false }, { JAPI_KEY_F12, 0x07, false },
+        { JAPI_KEY_ESCAPE, 0x76, false }, { JAPI_KEY_ENTER, 0x5A, false }, { JAPI_KEY_TAB, 0x0D, false },
+    };
+    for (unsigned i = 0; i < sizeof SPECIAL / sizeof SPECIAL[0]; i++)
+        if (SPECIAL[i].code == code)
+            return japi_held_sc[SPECIAL[i].sc + (SPECIAL[i].ext ? 256 : 0)] != 0;
+
+    // Printable key: find the scancode whose UNSHIFTED (base-layer) character is
+    // `code`, then read its held bit. Letters compare case-insensitively so both
+    // KEYDOWN(ASC("a")) and KEYDOWN(ASC("A")) test the physical A key.
+    if (code >= 0x20 && code <= 0x7E) {
+        for (int sc = 0; sc < 256; sc++) {
+            int base = japi_keymap[sc];
+            if (base == 0) continue;
+            int a = base, b = (int)code;
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a == b) return japi_held_sc[sc] != 0;
+        }
+    }
+    return false;
 }
 
 static inline void __not_in_flash_func(kbd_push)(uint16_t c) {
@@ -521,6 +572,12 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
         if (ps2_extended && sc == 0x12) {
             ps2_break_code = false; ps2_extended = false; continue;
         }
+
+        /* Live held-state for KEYDOWN: a make sets this key's bit, a break clears
+           it. Done here -- after the prefixes, before any translation -- so it is
+           per physical key, layout- and shift-independent. The E0-extended set
+           lives at +256 so e.g. Up-arrow (E0 0x75) and keypad-8 (0x75) differ. */
+        japi_held_sc[sc + (ps2_extended ? 256 : 0)] = ps2_break_code ? 0 : 1;
 
         if (ps2_break_code) {
             ps2_break_code = false;

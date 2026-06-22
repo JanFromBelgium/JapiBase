@@ -160,6 +160,15 @@
 #define JAPI_KEY_PRTSCR      0x0152
 #define JAPI_KEY_PAUSE       0x0153
 
+// Live modifier codes -- query-only, for japi_keydown / BASIC KEYDOWN(). They are
+// not delivered as characters; KEYDOWN(JAPI_KEY_MOD_SHIFT) etc. reports whether
+// the modifier is held right now (left or right counts). Named JAPI_KEY_MOD_* to
+// avoid the function-like JAPI_KEY_ALT(c)/JAPI_KEY_CTRL(c) combo macros.
+#define JAPI_KEY_MOD_SHIFT   0x0158
+#define JAPI_KEY_MOD_CTRL    0x0159
+#define JAPI_KEY_MOD_ALT     0x015A
+#define JAPI_KEY_MOD_ALTGR   0x015B
+
 // Modified navigation (editor selection / block select).
 // Offsets from the base nav codes 0x0101..0x010A:
 //   Shift = +0x60, Ctrl = +0x70, Ctrl+Shift = +0x80
@@ -300,6 +309,14 @@ int      japi_bitmap_height(void);
 // --- KEYBOARD ---
 bool japi_has_char(void);
 uint16_t japi_get_char(void);
+
+// Live key-state probe (for BASIC KEYDOWN). Returns true if the key that produces
+// `code` is held down right now -- shift-independent (the physical key). `code`
+// is the value japi_get_char would return for that key: ASCII for printable keys
+// (use the unshifted/base character, e.g. 'a' not 'A'), the JAPI_KEY_* codes for
+// arrows / function keys / Esc / Enter / Tab, and JAPI_KEY_MOD_SHIFT/CTRL/ALT/
+// ALTGR for the modifiers. Independent of the INKEY$/get_char buffer.
+bool japi_keydown(uint16_t code);
 
 // Live modifier state bitmask. Bit positions:
 //   0: Shift-L   1: Shift-R   2: Ctrl-L    3: Ctrl-R
