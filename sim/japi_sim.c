@@ -388,6 +388,13 @@ void japi_sound_note_on(int c){(void)c;}
 void japi_sound_note_off(int c){(void)c;}
 void japi_sound_off(void){}
 
+/* PCM streaming: no audio on the host. Pretend the ring is endless and that every
+   frame is accepted, so a streaming app runs through without blocking. */
+int  japi_audio_stream_space(void){ return 1<<20; }
+int  japi_audio_stream(const int16_t *b,int n){ (void)b; return n<0?0:n; }
+int  japi_audio_stream_stereo(const int16_t *b,int n){ (void)b; return n<0?0:n; }
+void japi_audio_stream_stop(void){}
+
 /* --- File I/O over stdio ---
  * Drive letters map to local directories under the working dir:
  *   A: -> simdisk_A/   (flash floppy)     C: -> simdisk_C/   (SD card)

@@ -439,6 +439,18 @@ void japi_sound_note_on(int ch);
 void japi_sound_note_off(int ch);
 void japi_sound_off(void);
 
+// --- App-fed PCM streaming ---
+// Stream raw 16-bit audio (~48360 Hz, the line-scan rate) from an app. While
+// samples are streaming the synth output is taken over; call _stop to hand it
+// back. _stream pushes mono frames (played on both speakers), _stream_stereo
+// pushes interleaved L,R frames. Both return how many frames were accepted (push
+// the rest later); _space reports the free room so the app can pace itself.
+// 16-bit in is scaled to the ~13-bit PWM output. No-ops on the host sim.
+int  japi_audio_stream_space(void);                         // free frames in the ring
+int  japi_audio_stream(const int16_t *buf, int nframes);    // mono -> L=R
+int  japi_audio_stream_stereo(const int16_t *buf, int nframes); // interleaved L,R
+void japi_audio_stream_stop(void);                          // stop, synth resumes
+
 // --- FILE I/O (unified API for SD card and LittleFS flash) ---
 //
 // Drive letters:  A: = SD card (removable media, available if inserted)

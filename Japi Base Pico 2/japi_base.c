@@ -303,6 +303,25 @@ static int audio_play_buf = 0;
 static int audio_play_idx = 0;
 static int audio_calc_idx = 0;
 
+// --- App-fed PCM streaming ---------------------------------------------------
+// A single-producer (Core 0 app) / single-consumer (line ISR on Core 1) ring of
+// stereo samples. While pcm_active, the line ISR plays from this ring instead of
+// the synth (takeover); on underrun it outputs silence. Power-of-2 size so the
+// modulo is a mask, and word-sized volatile indices so no lock is needed.
+#define PCM_RING       8192                 // ~0.17 s of stereo @ 48360 Hz
+#define PCM_RING_MASK  (PCM_RING - 1)
+static audio_sample_t pcm_ring[PCM_RING];
+static volatile uint32_t pcm_head = 0;      // app writes here
+static volatile uint32_t pcm_tail = 0;      // ISR reads here
+static volatile bool     pcm_active = false;
+
+// Map a signed 16-bit sample to the PWM range (0..AUDIO_PWM_WRAP-1, centred).
+static inline uint16_t pcm_scale(int16_t s) {
+    int32_t v = AUDIO_CENTER + (((int32_t)s * AUDIO_AMPLITUDE) >> 15);
+    if (v < 0) v = 0; if (v > AUDIO_PWM_WRAP - 1) v = AUDIO_PWM_WRAP - 1;
+    return (uint16_t)v;
+}
+
 static uint16_t audio_ms_to_rate(uint16_t ms) {
     if (ms == 0) return 65535;
     uint32_t samples = (uint32_t)ms * AUDIO_SAMPLE_RATE / 1000;
@@ -758,27 +777,41 @@ static void __not_in_flash_func(vga_dma_handler)(void) {
         }
     }
 
-    // Audio: output sample from play buffer
-    audio_sample_t *as = &audio_buf[audio_play_buf][audio_play_idx];
-    pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_A, as->left);
-    pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_B, as->right);
-    audio_play_idx++;
+    // Audio: output one sample. While an app streams PCM the ISR plays from its
+    // ring (takeover); on underrun (ring empty) it outputs silence. Otherwise it
+    // plays the synth's double-buffered output and computes the next synth sample.
+    if (pcm_active) {
+        uint16_t l = AUDIO_CENTER, r = AUDIO_CENTER;
+        if (pcm_tail != pcm_head) {                 // ring non-empty
+            audio_sample_t s = pcm_ring[pcm_tail & PCM_RING_MASK];
+            pcm_tail++;
+            l = s.left; r = s.right;
+        }
+        pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_A, l);
+        pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_B, r);
+        audio_play_idx++;
+    } else {
+        audio_sample_t *as = &audio_buf[audio_play_buf][audio_play_idx];
+        pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_A, as->left);
+        pwm_set_chan_level(audio_pwm_slice, PWM_CHAN_B, as->right);
+        audio_play_idx++;
 
-    // Audio: calculate one sample per scanline (spread across all 806 lines).
-    // Skip the synth entirely when every channel is idle: the calc buffer is
-    // initialised to AUDIO_CENTER (silence) and stays valid until a note starts.
-    if (audio_calc_idx < AUDIO_SAMPLES) {
-        bool any_active = false;
-        for (int i = 0; i < JAPI_SOUND_CHANNELS; i++) {
-            if (melody_ch[i].env.phase != ENV_IDLE) { any_active = true; break; }
+        // Calculate one synth sample per scanline (spread across all 806 lines).
+        // Skip the synth entirely when every channel is idle: the calc buffer is
+        // initialised to AUDIO_CENTER (silence) and stays valid until a note starts.
+        if (audio_calc_idx < AUDIO_SAMPLES) {
+            bool any_active = false;
+            for (int i = 0; i < JAPI_SOUND_CHANNELS; i++) {
+                if (melody_ch[i].env.phase != ENV_IDLE) { any_active = true; break; }
+            }
+            if (any_active) {
+                audio_buf[1 - audio_play_buf][audio_calc_idx] = synth_render_sample();
+            } else {
+                audio_buf[1 - audio_play_buf][audio_calc_idx].left  = AUDIO_CENTER;
+                audio_buf[1 - audio_play_buf][audio_calc_idx].right = AUDIO_CENTER;
+            }
+            audio_calc_idx++;
         }
-        if (any_active) {
-            audio_buf[1 - audio_play_buf][audio_calc_idx] = synth_render_sample();
-        } else {
-            audio_buf[1 - audio_play_buf][audio_calc_idx].left  = AUDIO_CENTER;
-            audio_buf[1 - audio_play_buf][audio_calc_idx].right = AUDIO_CENTER;
-        }
-        audio_calc_idx++;
     }
 
     // Audio: swap buffers at frame boundary
@@ -998,6 +1031,55 @@ void japi_play_ch(int ch, uint8_t note, uint16_t duration_ms) {
 
 void japi_play(uint8_t note, uint16_t duration_ms) {
     japi_play_ch(0, note, duration_ms);
+}
+
+// --- App-fed PCM streaming (16-bit, ~48360 Hz, takes over while active) ------
+// Producer side: Core-0 apps push samples; the line ISR (Core 1) consumes them.
+// The push calls scale each int16 to the PWM range and store it, set pcm_active,
+// and return how many frames were accepted (drop the rest -- the app re-offers
+// them after checking japi_audio_stream_space). japi_audio_stream_stop flushes
+// and hands the output back to the synth.
+
+// head/tail are free-running counters (the ISR reads pcm_ring[tail & MASK] and
+// checks head != tail for "non-empty"); the array index is the masked value, so
+// the full PCM_RING capacity is usable. The unsigned (head - tail) difference is
+// always <= PCM_RING, so it stays correct across the 2^32 wrap.
+int japi_audio_stream_space(void) {
+    return (int)(PCM_RING - (pcm_head - pcm_tail));
+}
+
+int japi_audio_stream_stereo(const int16_t *buf, int nframes) {
+    if (!buf || nframes <= 0) return 0;
+    pcm_active = true;
+    int written = 0;
+    for (int i = 0; i < nframes; i++) {
+        if ((pcm_head - pcm_tail) >= PCM_RING) break;    // ring full
+        pcm_ring[pcm_head & PCM_RING_MASK].left  = pcm_scale(buf[2 * i]);
+        pcm_ring[pcm_head & PCM_RING_MASK].right = pcm_scale(buf[2 * i + 1]);
+        pcm_head++;
+        written++;
+    }
+    return written;
+}
+
+int japi_audio_stream(const int16_t *buf, int nframes) {
+    if (!buf || nframes <= 0) return 0;
+    pcm_active = true;
+    int written = 0;
+    for (int i = 0; i < nframes; i++) {
+        if ((pcm_head - pcm_tail) >= PCM_RING) break;    // ring full
+        uint16_t v = pcm_scale(buf[i]);
+        pcm_ring[pcm_head & PCM_RING_MASK].left  = v;    // mono -> both channels
+        pcm_ring[pcm_head & PCM_RING_MASK].right = v;
+        pcm_head++;
+        written++;
+    }
+    return written;
+}
+
+void japi_audio_stream_stop(void) {
+    pcm_active = false;
+    pcm_head = pcm_tail = 0;                     // flush; synth resumes
 }
 
 // =========================================================================
